@@ -4,8 +4,10 @@
  * own boot files. Boot-config changes are dry-run by default (--commit to apply). */
 #include "frugal/backend.h"
 #include "frugal/isolist.h"
+#include "frugal/flash.h"
 #include "frugal/util.h"
 #include "winutil.h"
+#include "winusb.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -219,6 +221,70 @@ static int win_partition_disk(const char *disk, bool commit,
     return -1;
 }
 
+/* ---- bootable USB (raw flash) ---- */
+
+static long wdev_write(void *c, const void *b, size_t n) { return winusb_write((winusb_dev *)c, b, n); }
+static long wdev_read (void *c, void *b, size_t n)       { return winusb_read((winusb_dev *)c, b, n); }
+static int  wdev_rewind(void *c)                         { return winusb_rewind((winusb_dev *)c); }
+static void wdev_close(void *c)                          { winusb_close((winusb_dev *)c); }
+
+/* Accept "2", "PhysicalDrive2", or "\\.\PhysicalDrive2" -> 2. */
+static int parse_drive(const char *s) {
+    size_t len = strlen(s), i = len;
+    while (i > 0 && s[i - 1] >= '0' && s[i - 1] <= '9') --i;
+    if (i == len) return -1;
+    return atoi(s + i);
+}
+
+static int win_write_usb(const char *iso, const char *device,
+                         bool commit, bool verify, bool force) {
+    int drive = parse_drive(device);
+    if (drive < 0) {
+        log_err("could not parse a drive number from '%s' (use e.g. 2 or \\\\.\\PhysicalDrive2)", device);
+        return -1;
+    }
+    uint64_t sz = winusb_size(drive);
+    int rem = winusb_is_removable(drive);
+    int sys = winusb_hosts_system(drive);
+    log_info("target: PhysicalDrive%d  size=%llu MiB  removable=%s  system=%s",
+             drive, (unsigned long long)(sz / (1024ull * 1024ull)),
+             rem == 1 ? "yes" : rem == 0 ? "no" : "?", sys == 1 ? "YES" : "no");
+
+    if (sys == 1) {
+        log_err("refusing: PhysicalDrive%d hosts the Windows system volume", drive);
+        return -1;
+    }
+    if (!commit) {
+        log_info("(dry-run) would raw-write %s -> PhysicalDrive%d%s", iso, drive, verify ? " + verify" : "");
+        if (rem == 0) log_warn("PhysicalDrive%d is NOT removable; --commit will need --force", drive);
+        log_info("re-run elevated with --commit to flash");
+        return 0;
+    }
+    if (!win_is_elevated()) { log_err("--commit requires an elevated (admin) prompt"); return -1; }
+    if (rem == 0 && !force) {
+        log_err("PhysicalDrive%d is not removable; pass --force to override", drive);
+        return -1;
+    }
+
+    char *err = NULL;
+    winusb_dev *dev = winusb_open(drive, &err);
+    if (!dev) { log_err("%s", err ? err : "open failed"); free(err); return -1; }
+
+    flash_dev_t fd = {
+        .ctx = dev, .align = 4096,
+        .write = wdev_write, .read = wdev_read, .rewind = wdev_rewind, .close = wdev_close,
+    };
+    log_warn("raw-writing to PhysicalDrive%d — all existing data is destroyed", drive);
+    int rc = flash_iso_to_dev(iso, &fd, verify);
+    fd.close(fd.ctx);
+    return rc;
+}
+
+static int win_list_disks(void) {
+    winusb_list();
+    return 0;
+}
+
 static int win_probe_env(void) {
     firmware_t fw = win_firmware_type();
     int sb = win_secure_boot_enabled();
@@ -242,5 +308,7 @@ static const frugal_backend_t g_backend = {
     .partition_disk = win_partition_disk,
     .install_grub   = win_install_grub,
     .probe_env      = win_probe_env,
+    .write_usb      = win_write_usb,
+    .list_disks     = win_list_disks,
 };
 const frugal_backend_t *backend_get(void) { return &g_backend; }

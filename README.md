@@ -34,11 +34,13 @@ src/core/         PORTABLE core — no platform code
   isolist.c       "does path X exist in the ISO?" over a tar listing
   profile.c       per-distro detection + boot profiles (edit me)
   grubcfg.c       master grub.cfg + per-ISO entry generation
-  ui.c            Etcher-style banner + three-step strip
+  ui.c            Etcher-style banner + three-step strip + progress bar
+  flash.c         raw ISO->device streaming + read-back verify
 src/backend/
-  backend_linux.c    AppImage host — partition + grub-install [REAL]
-  backend_windows.c  Windows host — ESP + bcdedit orchestration [REAL, needs assets]
+  backend_linux.c    AppImage host — partition + grub-install + raw flash [REAL]
+  backend_windows.c  Windows host — ESP + bcdedit orchestration + raw flash [REAL]
   winutil.c          Windows probes (firmware, Secure Boot, BitLocker, ...)
+  winusb.c           Windows raw PhysicalDrive access (lock/dismount/write)
 src/main.c        CLI frontend
 ```
 
@@ -134,15 +136,39 @@ search --no-floppy --file --set=root /EFI/ISO2Drive/grub.cfg
 configfile /EFI/ISO2Drive/grub.cfg
 ```
 
+## Bootable USB (raw / dd-style flash)
+
+A separate mode from frugal install: write an ISO **byte-for-byte** onto a whole
+device, the way Balena Etcher does. Modern Linux ISOs are isohybrid, so the result
+boots directly on both BIOS and UEFI.
+
+```bash
+iso2drive list-disks                                       # find the target safely
+iso2drive write-usb ubuntu-24.04.iso /dev/sdb              # dry-run preview (Linux)
+iso2drive write-usb ubuntu-24.04.iso 2 --commit --verify   # flash + verify (Windows: drive #)
+```
+
+- Device: Linux `/dev/sdX`; Windows a drive number, `PhysicalDriveN`, or `\\.\PhysicalDriveN`.
+- **Dry-run until `--commit`**; `--commit` needs root (Linux) / an elevated prompt (Windows).
+- **Refuses the system disk** outright, and refuses non-removable drives unless `--force`.
+- `--verify` reads the device back and compares it against the ISO.
+- A live progress bar shows write (and verify) progress.
+
+`write-usb` does the raw/`dd` path only — right for isohybrid Linux ISOs. Windows
+ISOs and >4 GB files on FAT need the file-copy + syslinux path (roadmap).
+
 ## What's real vs stubbed
 
 **Real:** distro detection; the master `grub.cfg`; per-ISO entry generation; the
 store/marker layout; ISO copy; **greenfield disk partitioning** (Linux: `sgdisk` +
 `mkfs` + mount, with a full dry-run preview and system-disk guards); **`install_grub`
 on both backends** — Linux (`grub-install` x2) and Windows (ESP + `bcdedit`
-orchestration, gated on the bundled GRUB binaries above).
+orchestration, gated on the bundled GRUB binaries above); **bootable-USB raw flash**
+on both backends (`list-disks` + `write-usb`, with progress bar, read-back verify,
+and system-disk / non-removable guards).
 
-**Not yet implemented:** persistence and bootable-USB mode (see roadmap).
+**Not yet implemented:** persistence, and the file-copy + syslinux USB path
+(see roadmap).
 
 ## Per-distro boot logic
 
@@ -155,11 +181,10 @@ openSUSE) only boot ISOs that ship one.
 
 ## Roadmap
 
-1. **Bootable-USB mode** — write a *traditional* bootable USB from an ISO
-   (hybrid-ISO / `dd`-style flash, plus a file-copy + syslinux path), the direct
-   Balena-Etcher-style workflow, distinct from frugal install.
-2. **Persistence** — casper-rw / Debian `persistence`, using the leftover data-partition
+1. **Persistence** — casper-rw / Debian `persistence`, using the leftover data-partition
    space (grow it / add a persistence file at provision time).
+2. **File-copy USB path** — a FAT32/exFAT file-copy + syslinux/EFI variant of
+   `write-usb`, for Windows ISOs and >4 GB payloads (raw `dd` covers isohybrid today).
 3. **Windows polish** — bundle/auto-fetch the GRUB binaries; add a Secure Boot
    signed-shim path so `--commit` works without disabling Secure Boot.
 4. Validate/extend the profile table against real images; multi-ISO menu polish.

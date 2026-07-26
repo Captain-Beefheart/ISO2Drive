@@ -3,10 +3,14 @@
 #include "frugal/backend.h"
 #include "frugal/isolist.h"
 #include "frugal/grubcfg.h"
+#include "frugal/flash.h"
 #include "frugal/util.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 /* Wrap a path in single quotes for /bin/sh, escaping embedded quotes. */
 static char *sh_quote(const char *s) {
@@ -265,6 +269,102 @@ static int lin_install_grub(const frugal_target_t *t, const char *store_root) {
     return fail ? -1 : 0;
 }
 
+/* ---- bootable USB (raw flash) ---- */
+
+typedef struct { int fd; } ldev;
+
+static long ldev_write(void *c, const void *buf, size_t len) {
+    int fd = ((ldev *)c)->fd;
+    const char *p = buf;
+    size_t off = 0;
+    while (off < len) {
+        ssize_t w = write(fd, p + off, len - off);
+        if (w <= 0) return -1;
+        off += (size_t)w;
+    }
+    return (long)off;
+}
+static long ldev_read(void *c, void *buf, size_t len) {
+    int fd = ((ldev *)c)->fd;
+    char *p = buf;
+    size_t off = 0;
+    while (off < len) {
+        ssize_t r = read(fd, p + off, len - off);
+        if (r <= 0) return -1;
+        off += (size_t)r;
+    }
+    return (long)off;
+}
+static int  ldev_rewind(void *c) { return lseek(((ldev *)c)->fd, 0, SEEK_SET) == (off_t)-1 ? -1 : 0; }
+static void ldev_close(void *c) {
+    ldev *d = c;
+    if (d) {
+        if (d->fd >= 0) {
+#ifndef _WIN32
+            fsync(d->fd); /* flush to the device before we drop the handle */
+#endif
+            close(d->fd);
+        }
+        free(d);
+    }
+}
+
+/* /sys/block/<name>/removable: 1 = removable. */
+static int disk_is_removable(const char *device) {
+    const char *b = strrchr(device, '/');
+    b = b ? b + 1 : device;
+    char *cmd = str_format("cat /sys/block/%s/removable 2>/dev/null", b);
+    if (!cmd) return -1;
+    char *o = run_capture(cmd);
+    free(cmd);
+    int r = -1;
+    if (o) { if (o[0] == '1') r = 1; else if (o[0] == '0') r = 0; free(o); }
+    return r;
+}
+
+static int lin_write_usb(const char *iso, const char *device,
+                         bool commit, bool verify, bool force) {
+    if (disk_is_root_disk(device)) {
+        log_err("refusing: %s is the running system disk", device);
+        return -1;
+    }
+    int rem = disk_is_removable(device);
+    log_info("target: %s  removable=%s", device, rem == 1 ? "yes" : rem == 0 ? "no" : "?");
+
+    if (!commit) {
+        log_info("(dry-run) would raw-write %s -> %s (dd-style)%s", iso, device, verify ? " + verify" : "");
+        if (rem == 0) log_warn("%s is NOT removable; --commit will need --force", device);
+        log_info("re-run as root with --commit to flash");
+        return 0;
+    }
+    if (rem == 0 && !force) {
+        log_err("%s is not removable; pass --force to override", device);
+        return -1;
+    }
+
+    int fd = open(device, O_RDWR);
+    if (fd < 0) { log_err("cannot open %s (need root?)", device); return -1; }
+    ldev *d = malloc(sizeof *d);
+    if (!d) { close(fd); return -1; }
+    d->fd = fd;
+
+    flash_dev_t dev = {
+        .ctx = d, .align = 512,
+        .write = ldev_write, .read = ldev_read, .rewind = ldev_rewind, .close = ldev_close,
+    };
+    log_warn("raw-writing to %s — all existing data is destroyed", device);
+    int rc = flash_iso_to_dev(iso, &dev, verify);
+    dev.close(dev.ctx);
+    return rc;
+}
+
+static int lin_list_disks(void) {
+    char *o = run_capture("lsblk -d -o NAME,SIZE,TYPE,TRAN,HOTPLUG,MODEL 2>/dev/null");
+    if (o && *o) { fputs(o, stdout); free(o); }
+    else { free(o); log_warn("lsblk not available"); }
+    return 0;
+}
+
 static int lin_probe_env(void) {
     char *fw = run_capture("[ -d /sys/firmware/efi ] && echo UEFI || echo BIOS");
     if (fw) {
@@ -284,5 +384,7 @@ static const frugal_backend_t g_backend = {
     .partition_disk = lin_partition_disk,
     .install_grub   = lin_install_grub,
     .probe_env      = lin_probe_env,
+    .write_usb      = lin_write_usb,
+    .list_disks     = lin_list_disks,
 };
 const frugal_backend_t *backend_get(void) { return &g_backend; }

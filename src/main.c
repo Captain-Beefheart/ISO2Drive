@@ -107,6 +107,29 @@ static int cmd_provision(const frugal_backend_t *b, int argc, char **argv) {
     return rc ? 1 : 0;
 }
 
+static int cmd_list_disks(const frugal_backend_t *b) {
+    ui_banner();
+    return b->list_disks();
+}
+
+static int cmd_write_usb(const frugal_backend_t *b, int argc, char **argv) {
+    const char *iso    = argv[2];
+    const char *device = argv[3];
+    bool commit = false, verify = false, force = false;
+    for (int i = 4; i < argc; ++i) {
+        if      (!strcmp(argv[i], "--commit")) commit = true;
+        else if (!strcmp(argv[i], "--verify")) verify = true;
+        else if (!strcmp(argv[i], "--force"))  force = true;
+        else log_warn("ignoring unknown option: %s", argv[i]);
+    }
+    ui_banner();
+    ui_step(1, 1, "IMAGE", iso);
+    ui_step(2, 1, "DRIVE", device);
+    ui_step(3, commit ? 1 : 0, "FLASH",
+            commit ? "raw write (dd-style)" : "dry-run (pass --commit to flash)");
+    return b->write_usb(iso, device, commit, verify, force) ? 1 : 0;
+}
+
 static int cmd_add(const frugal_backend_t *b, int argc, char **argv) {
     const char *store = argv[2];
     const char *iso   = argv[3];
@@ -181,9 +204,12 @@ static void usage(void) {
         "    iso2drive add <store-dir> <iso> [flash opts]  stage an ISO (+ optionally flash)\n"
         "    iso2drive format-disk <disk> [--commit]       GREENFIELD: wipe+partition a blank disk\n"
         "    iso2drive provision <disk> <iso> [--commit]   GREENFIELD: partition + stage + flash\n"
+        "    iso2drive list-disks                          list candidate target drives\n"
+        "    iso2drive write-usb <iso> <device> [opts]     BOOTABLE USB: raw dd-style flash\n"
         "    iso2drive help\n"
         "\n"
-        "  greenfield commands ERASE the target disk (Linux backend, root, dry-run by default).\n"
+        "  greenfield + write-usb ERASE the target (root/admin, dry-run by default).\n"
+        "  write-usb options:  --commit  --verify  --force (allow non-removable targets)\n"
         "\n"
         "  flash options for 'add':\n"
         "    --flash          also install boot code (Windows picks UEFI/BIOS automatically)\n"
@@ -207,6 +233,8 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "doctor")  && argc == 2) return cmd_doctor(b);
     if (!strcmp(argv[1], "format-disk") && argc >= 3) return cmd_format_disk(b, argc, argv);
     if (!strcmp(argv[1], "provision")   && argc >= 4) return cmd_provision(b, argc, argv);
+    if (!strcmp(argv[1], "list-disks")  && argc == 2) return cmd_list_disks(b);
+    if (!strcmp(argv[1], "write-usb")   && argc >= 4) return cmd_write_usb(b, argc, argv);
     if (!strcmp(argv[1], "add")     && argc >= 4) return cmd_add(b, argc, argv);
     if (!strcmp(argv[1], "help")) { usage(); return 0; }
     usage();

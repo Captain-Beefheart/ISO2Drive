@@ -39,3 +39,15 @@ void ui_step(int n, int active, const char *label, const char *detail) {
     printf("  %s%s %s%s  " DIM "▸" RST "  %s\n",
            color, glyph, label, RST, detail ? detail : "");
 }
+
+void ui_progress(const char *label, unsigned long long done, unsigned long long total) {
+    const int width = 24;
+    double frac = total ? (double)done / (double)total : 0.0;
+    if (frac > 1.0) frac = 1.0;
+    int fill = (int)(frac * width);
+    fprintf(stderr, "\r  " TEAL "%s" RST " [", label ? label : "flash");
+    for (int i = 0; i < width; ++i) fputc(i < fill ? '#' : '-', stderr);
+    fprintf(stderr, "] %3d%%  %llu/%llu MiB",
+            (int)(frac * 100), done / (1024ull * 1024ull), total / (1024ull * 1024ull));
+    fflush(stderr);
+}

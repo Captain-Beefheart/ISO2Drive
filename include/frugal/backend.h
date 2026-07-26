@@ -44,6 +44,11 @@ typedef struct frugal_backend {
     /* --- boot install --- */
     int (*install_grub)(const frugal_target_t *tgt, const char *store_root);
     int (*probe_env)(void);
+
+    /* --- bootable USB (raw / dd-style flash of the ISO onto a whole device) --- */
+    int (*write_usb)(const char *iso, const char *device,
+                     bool commit, bool verify, bool force);
+    int (*list_disks)(void);   /* print candidate target devices */
 } frugal_backend_t;
 
 const frugal_backend_t *backend_get(void);
