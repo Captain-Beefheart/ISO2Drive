@@ -2,6 +2,8 @@
 /iso2drive
 /iso2drive.exe
 /iso2drive_lin.exe
+/iso2drive-*.exe
+/*.AppImage
 /out/
 
 # Built/fetched GRUB binaries — produced by scripts/get-grub-assets.sh, not committed
