@@ -5,6 +5,8 @@
 /iso2drive-*.exe
 /*.AppImage
 /out/
+__pycache__/
+*.pyc
 
 # Built/fetched GRUB binaries — produced by scripts/get-grub-assets.sh, not committed
 # (GPL binaries + must be built with our config; efi-prelude.cfg is kept).
