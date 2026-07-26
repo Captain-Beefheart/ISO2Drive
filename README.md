@@ -55,6 +55,25 @@ make
 Produces `iso2drive.exe` (Windows) or `iso2drive` (Linux). The Makefile auto-selects
 the host backend from `$(OS)`.
 
+## GUI
+
+A small Etcher-style desktop front-end (Python + tkinter) that drives the same CLI:
+
+```bash
+python gui/iso2drive_gui.py
+```
+
+Pick an image, pick a drive, choose a mode — **raw USB**, **file-copy USB**, or
+**install to disk (frugal)** — then **Show plan** to preview the exact command, or
+**Flash** to run it (behind a confirmation). It streams the engine's output and a
+progress bar, hides the system disk and non-removable drives by default (an
+"advanced" toggle reveals fixed disks), and — since flashing needs privileges —
+offers a "Relaunch as Administrator" button on Windows (use `sudo` on Linux).
+
+It finds the `iso2drive` binary next to the script, in the repo root, or on your
+`PATH`, so build it (`make`) or drop a release binary alongside first. Needs a
+Python with tkinter (standard on python.org builds; on MSYS2 it's the mingw python).
+
 ## Usage
 
 ```bash
