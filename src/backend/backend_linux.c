@@ -25,9 +25,9 @@ static char *sh_quote(const char *s) {
     return out;
 }
 
-/* Run a shell command with inherited stdio (so grub-install output is visible).
- * Returns 0 on a clean exit. */
-static int sh_run(const char *cmd) {
+/* Run a command (commit) or just print it (dry-run). Returns 0 on success. */
+static int run_step(bool commit, const char *cmd) {
+    if (!commit) { log_info("(dry-run) %s", cmd); return 0; }
     log_info("+ %s", cmd);
     int rc = system(cmd);
     if (rc != 0) log_err("command failed (status %d): %s", rc, cmd);
@@ -75,14 +75,16 @@ static int lin_copy_iso(const char *iso, const char *store_root, char **out_grub
 }
 
 /* Real GRUB install: UEFI (removable, no NVRAM) and/or BIOS (core.img on disk),
- * then drop the master grub.cfg where grub-install created its /grub dir. */
+ * then drop the master grub.cfg where grub-install created its /grub dir.
+ * Honors t->commit (dry-run prints the commands without running them). */
 static int lin_install_grub(const frugal_target_t *t, const char *store_root) {
     (void)store_root;
     if (!t || !t->esp_dir) {
         log_err("install_grub: an ESP directory is required (--esp <mounted ESP>)");
         return -1;
     }
-    if (system("command -v grub-install >/dev/null 2>&1") != 0) {
+    bool commit = t->commit;
+    if (commit && system("command -v grub-install >/dev/null 2>&1") != 0) {
         log_err("grub-install not found; install grub2 + grub-pc-bin + grub-efi-amd64-bin");
         return -1;
     }
@@ -98,7 +100,7 @@ static int lin_install_grub(const frugal_target_t *t, const char *store_root) {
         char *cmd = str_format(
             "grub-install --target=x86_64-efi --efi-directory=%s "
             "--boot-directory=%s --removable --recheck", qesp, qboot);
-        if (cmd) { fail |= (sh_run(cmd) != 0); free(cmd); } else fail = 1;
+        if (cmd) { fail |= (run_step(commit, cmd) != 0); free(cmd); } else fail = 1;
     }
 
     if (t->do_bios) {
@@ -110,7 +112,7 @@ static int lin_install_grub(const frugal_target_t *t, const char *store_root) {
             char *cmd = qdisk ? str_format(
                 "grub-install --target=i386-pc --boot-directory=%s --recheck %s",
                 qboot, qdisk) : NULL;
-            if (cmd) { fail |= (sh_run(cmd) != 0); free(cmd); } else fail = 1;
+            if (cmd) { fail |= (run_step(commit, cmd) != 0); free(cmd); } else fail = 1;
             free(qdisk);
         }
     }
@@ -118,13 +120,19 @@ static int lin_install_grub(const frugal_target_t *t, const char *store_root) {
     /* grub-install creates <boot>/grub/; put our menu there. */
     char *cfg = str_format("%s/grub/grub.cfg", boot);
     if (cfg) {
-        if (grubcfg_write_master(cfg) == 0) log_info("wrote %s", cfg);
-        else { log_err("could not write %s", cfg); fail = 1; }
+        if (!commit) {
+            log_info("(dry-run) write master grub.cfg -> %s", cfg);
+        } else if (grubcfg_write_master(cfg) == 0) {
+            log_info("wrote %s", cfg);
+        } else {
+            log_err("could not write %s", cfg);
+            fail = 1;
+        }
         free(cfg);
     } else fail = 1;
 
     free(qesp); free(qboot);
-    if (!fail)
+    if (!fail && commit)
         log_info("boot code installed (uefi=%s bios=%s)",
                  t->do_uefi ? "yes" : "no", t->do_bios ? "yes" : "no");
     return fail ? -1 : 0;

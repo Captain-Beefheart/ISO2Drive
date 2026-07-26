@@ -107,6 +107,12 @@ int copy_file(const char *src, const char *dst) {
     return rc;
 }
 
+bool file_exists(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (f) { fclose(f); return true; }
+    return false;
+}
+
 char *run_capture(const char *cmd) {
     FILE *fp = POPEN(cmd, "r");
     if (!fp) return NULL;

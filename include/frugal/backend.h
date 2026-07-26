@@ -7,11 +7,13 @@
  * install_grub). A greenfield backend partitions/mounts first, then hands one
  * of these to install_grub. */
 typedef struct {
-    const char *disk;     /* whole-disk device for BIOS core.img, e.g. /dev/sdb; NULL to skip */
-    const char *esp_dir;  /* mounted EFI System Partition, e.g. /mnt/esp */
-    const char *boot_dir; /* GRUB boot dir; NULL -> use esp_dir */
+    const char *disk;       /* whole-disk device for BIOS core.img, e.g. /dev/sdb; NULL to skip */
+    const char *esp_dir;    /* mounted EFI System Partition, e.g. /mnt/esp */
+    const char *boot_dir;   /* GRUB boot dir; NULL -> use esp_dir */
+    const char *assets_dir; /* bundled GRUB binaries (Windows); NULL -> "assets/grub" */
     bool do_uefi;
     bool do_bios;
+    bool commit;            /* false = dry-run (print the plan, change nothing) */
 } frugal_target_t;
 
 /* A host backend supplies the platform-specific half of the tool: reading

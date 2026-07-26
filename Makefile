@@ -6,7 +6,7 @@ CFLAGS  ?= -std=c11 -Wall -Wextra -O2 -Iinclude
 LDFLAGS ?=
 
 ifeq ($(OS),Windows_NT)
-    BACKEND := src/backend/backend_windows.c
+    BACKEND := src/backend/backend_windows.c src/backend/winutil.c
     BIN     := iso2drive.exe
 else
     BACKEND := src/backend/backend_linux.c

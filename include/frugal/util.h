@@ -20,6 +20,7 @@ char *path_basename_noext(const char *path); /* last component, extension droppe
 int   ensure_dir(const char *path);          /* best-effort mkdir (single level) */
 int   write_file(const char *path, const char *content);
 int   copy_file(const char *src, const char *dst);
+bool  file_exists(const char *path);
 
 /* Run a shell command and capture stdout (caller frees). NULL on failure. */
 char *run_capture(const char *cmd);

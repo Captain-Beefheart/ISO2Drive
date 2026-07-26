@@ -31,6 +31,13 @@ static int cmd_gencfg(const char *out) {
     return 0;
 }
 
+static int cmd_doctor(const frugal_backend_t *b) {
+    ui_banner();
+    log_info("backend: %s", b->name);
+    b->probe_env();
+    return 0;
+}
+
 static int cmd_add(const frugal_backend_t *b, int argc, char **argv) {
     const char *store = argv[2];
     const char *iso   = argv[3];
@@ -39,9 +46,12 @@ static int cmd_add(const frugal_backend_t *b, int argc, char **argv) {
     tgt.do_uefi = true;
     bool flash = false;
     for (int i = 4; i < argc; ++i) {
-        if      (!strcmp(argv[i], "--esp")      && i + 1 < argc) { tgt.esp_dir  = argv[++i]; flash = true; }
-        else if (!strcmp(argv[i], "--disk")     && i + 1 < argc) { tgt.disk     = argv[++i]; tgt.do_bios = true; }
-        else if (!strcmp(argv[i], "--boot-dir") && i + 1 < argc) { tgt.boot_dir = argv[++i]; }
+        if      (!strcmp(argv[i], "--esp")      && i + 1 < argc) { tgt.esp_dir    = argv[++i]; flash = true; }
+        else if (!strcmp(argv[i], "--disk")     && i + 1 < argc) { tgt.disk       = argv[++i]; tgt.do_bios = true; }
+        else if (!strcmp(argv[i], "--boot-dir") && i + 1 < argc) { tgt.boot_dir   = argv[++i]; }
+        else if (!strcmp(argv[i], "--assets")   && i + 1 < argc) { tgt.assets_dir = argv[++i]; }
+        else if (!strcmp(argv[i], "--flash"))   { flash = true; }
+        else if (!strcmp(argv[i], "--commit"))  { tgt.commit = true; }
         else if (!strcmp(argv[i], "--no-uefi")) { tgt.do_uefi = false; }
         else if (!strcmp(argv[i], "--no-bios")) { tgt.do_bios = false; }
         else { log_warn("ignoring unknown option: %s", argv[i]); }
@@ -82,9 +92,10 @@ static int cmd_add(const frugal_backend_t *b, int argc, char **argv) {
     char *master = str_format("%s/grub.cfg", store);
     if (master) { grubcfg_write_master(master); free(master); }
 
-    /* (3) FLASH -- install boot code (only when a target ESP is given) */
-    ui_step(3, flash ? 1 : 0, "FLASH",
-            flash ? "installing boot code" : "staged (pass --esp to flash boot code)");
+    /* (3) FLASH -- install boot code */
+    const char *detail = !flash ? "staged (pass --flash to install boot code)"
+                       : tgt.commit ? "installing boot code" : "dry-run (pass --commit to apply)";
+    ui_step(3, flash ? 1 : 0, "FLASH", detail);
     if (flash) b->install_grub(&tgt, store);
 
     free(grub_path); free(base); free(slug); free(title); free(entries);
@@ -97,12 +108,16 @@ static void usage(void) {
         "  usage:\n"
         "    iso2drive detect <iso>                        inspect an ISO\n"
         "    iso2drive gen-cfg <out.cfg>                   write the master grub.cfg\n"
+        "    iso2drive doctor                              report firmware / boot environment\n"
         "    iso2drive add <store-dir> <iso> [flash opts]  stage an ISO (+ optionally flash)\n"
         "    iso2drive help\n"
         "\n"
-        "  flash options for 'add' (Linux backend):\n"
-        "    --esp <dir>      mounted EFI System Partition (its presence enables flashing)\n"
+        "  flash options for 'add':\n"
+        "    --flash          also install boot code (Windows picks UEFI/BIOS automatically)\n"
+        "    --commit         actually apply changes (default is a dry-run preview)\n"
+        "    --esp <dir>      Linux: mounted EFI System Partition (implies --flash)\n"
         "    --disk <dev>     whole disk for BIOS boot code, e.g. /dev/sdb\n"
+        "    --assets <dir>   Windows: bundled GRUB binaries (default: assets/grub)\n"
         "    --boot-dir <d>   GRUB boot dir (default: the ESP)\n"
         "    --no-uefi / --no-bios\n"
         "\n"
@@ -116,6 +131,7 @@ int main(int argc, char **argv) {
     if (argc < 2) { usage(); return 1; }
     if (!strcmp(argv[1], "detect")  && argc == 3) return cmd_detect(b, argv[2]);
     if (!strcmp(argv[1], "gen-cfg") && argc == 3) return cmd_gencfg(argv[2]);
+    if (!strcmp(argv[1], "doctor")  && argc == 2) return cmd_doctor(b);
     if (!strcmp(argv[1], "add")     && argc >= 4) return cmd_add(b, argc, argv);
     if (!strcmp(argv[1], "help")) { usage(); return 0; }
     usage();
