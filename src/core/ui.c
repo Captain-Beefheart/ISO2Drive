@@ -1,4 +1,5 @@
 #include "frugal/ui.h"
+#include "frugal/version.h"
 #include <stdio.h>
 
 #ifdef _WIN32
@@ -25,7 +26,7 @@ void ui_init(void) {
 }
 
 void ui_banner(void) {
-    printf("\n  " BOLD TEAL "ISO2Drive" RST
+    printf("\n  " BOLD TEAL "ISO2Drive" RST " " DIM "v" ISO2DRIVE_VERSION RST
            "  " DIM "— flash an ISO to a drive, boot it anywhere" RST "\n\n");
     printf("  " TEAL "①" RST " IMAGE   " DIM "›" RST "   "
               TEAL "②" RST " DRIVE   " DIM "›" RST "   "

@@ -6,6 +6,7 @@
 #include "frugal/grubcfg.h"
 #include "frugal/ui.h"
 #include "frugal/util.h"
+#include "frugal/version.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -333,6 +334,7 @@ int main(int argc, char **argv) {
     ui_init();
     const frugal_backend_t *b = backend_get();
     if (argc < 2) { usage(); return 1; }
+    if (!strcmp(argv[1], "version") || !strcmp(argv[1], "--version")) { printf("ISO2Drive %s\n", ISO2DRIVE_VERSION); return 0; }
     if (!strcmp(argv[1], "detect")  && argc == 3) return cmd_detect(b, argv[2]);
     if (!strcmp(argv[1], "gen-cfg") && argc == 3) return cmd_gencfg(argv[2]);
     if (!strcmp(argv[1], "doctor")  && argc == 2) return cmd_doctor(b);
