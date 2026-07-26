@@ -36,7 +36,7 @@ src/core/         PORTABLE core — no platform code
   grubcfg.c       master grub.cfg + per-ISO entry generation
   ui.c            Etcher-style banner + three-step strip
 src/backend/
-  backend_linux.c    AppImage host — grub-install x2          [REAL]
+  backend_linux.c    AppImage host — partition + grub-install [REAL]
   backend_windows.c  Windows host — ESP + bcdedit orchestration [REAL, needs assets]
   winutil.c          Windows probes (firmware, Secure Boot, BitLocker, ...)
 src/main.c        CLI frontend
@@ -64,17 +64,28 @@ iso2drive add /mnt/data/iso2drive ubuntu-24.04.iso   # stage an ISO (no boot cod
 
 **Everything that rewrites boot config is a dry-run until you pass `--commit`.**
 
-### Flash boot code — Linux (greenfield)
+### Greenfield — Linux (blank disk, end to end)
 
-Run as root with the target ESP mounted:
+`provision` wipes a blank disk, lays down GPT (1 MiB BIOS-boot + 300 MiB FAT32 ESP +
+ext4 data), mounts it, stages the ISO, and installs GRUB for **both** UEFI and BIOS —
+one command. Run as root; **dry-run until `--commit`**:
 
 ```bash
-iso2drive add /mnt/data/iso2drive ubuntu-24.04.iso --esp /mnt/esp --disk /dev/sdb --commit
+iso2drive provision /dev/sdb ubuntu-24.04.iso --commit
 ```
 
-`--esp` runs `grub-install` for UEFI (`--removable`, no NVRAM edits); adding `--disk`
-also installs BIOS boot code (`i386-pc`). The master `grub.cfg` is written to
-`<esp>/grub/grub.cfg`. Drop `--commit` to preview the exact commands.
+Or just partition/format/mount a disk, then stage separately:
+
+```bash
+iso2drive format-disk /dev/sdb --commit
+iso2drive add /run/iso2drive/data/iso2drive ubuntu-24.04.iso --esp /run/iso2drive/esp --disk /dev/sdb --commit
+```
+
+Safety: greenfield commands **refuse the running system disk** and any disk with
+mounted partitions, print the target's current layout before touching it, and need
+`sgdisk` (gptfdisk), `mkfs.fat` (dosfstools), `mkfs.ext4` (e2fsprogs), and
+`partprobe` (parted). `add --esp` alone (no partitioning) still works if you've
+prepared the partitions yourself.
 
 ### Flash boot code — Windows (brownfield dual-boot)
 
@@ -126,12 +137,12 @@ configfile /EFI/ISO2Drive/grub.cfg
 ## What's real vs stubbed
 
 **Real:** distro detection; the master `grub.cfg`; per-ISO entry generation; the
-store/marker layout; ISO copy; **`install_grub` on both backends** — Linux
-(`grub-install` x2) and Windows (ESP + `bcdedit` orchestration with a full dry-run
-preview, gated on the bundled GRUB binaries above).
+store/marker layout; ISO copy; **greenfield disk partitioning** (Linux: `sgdisk` +
+`mkfs` + mount, with a full dry-run preview and system-disk guards); **`install_grub`
+on both backends** — Linux (`grub-install` x2) and Windows (ESP + `bcdedit`
+orchestration, gated on the bundled GRUB binaries above).
 
-**Not yet implemented:** greenfield disk partitioning, persistence, and bootable-USB
-mode (see roadmap).
+**Not yet implemented:** persistence and bootable-USB mode (see roadmap).
 
 ## Per-distro boot logic
 
@@ -144,12 +155,11 @@ openSUSE) only boot ISOs that ship one.
 
 ## Roadmap
 
-1. **Disk partitioning (greenfield)** — GPT + BIOS-boot + ESP + data partition,
-   so the Linux backend can prepare a blank disk end to end.
-2. **Bootable-USB mode** — write a *traditional* bootable USB from an ISO
+1. **Bootable-USB mode** — write a *traditional* bootable USB from an ISO
    (hybrid-ISO / `dd`-style flash, plus a file-copy + syslinux path), the direct
    Balena-Etcher-style workflow, distinct from frugal install.
-3. **Persistence** — casper-rw / Debian `persistence`, using leftover disk space.
-4. **Windows polish** — bundle/auto-fetch the GRUB binaries; add a Secure Boot
+2. **Persistence** — casper-rw / Debian `persistence`, using the leftover data-partition
+   space (grow it / add a persistence file at provision time).
+3. **Windows polish** — bundle/auto-fetch the GRUB binaries; add a Secure Boot
    signed-shim path so `--commit` works without disabling Secure Boot.
-5. Validate/extend the profile table against real images; multi-ISO menu polish.
+4. Validate/extend the profile table against real images; multi-ISO menu polish.

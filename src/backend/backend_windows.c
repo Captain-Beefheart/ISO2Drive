@@ -211,6 +211,14 @@ static int win_install_grub(const frugal_target_t *t, const char *store_root) {
     return rc;
 }
 
+static int win_partition_disk(const char *disk, bool commit,
+                              char **out_esp, char **out_store) {
+    (void)disk; (void)commit; (void)out_esp; (void)out_store;
+    log_err("disk partitioning is greenfield-only (Linux backend / AppImage)");
+    log_err("the Windows tool adds Linux booting to your EXISTING disk, no repartition");
+    return -1;
+}
+
 static int win_probe_env(void) {
     firmware_t fw = win_firmware_type();
     int sb = win_secure_boot_enabled();
@@ -225,9 +233,14 @@ static int win_probe_env(void) {
 }
 
 static const frugal_backend_t g_backend = {
-    "windows",
-    win_iso_open, win_iso_has_path, win_iso_close,
-    win_prepare_store, win_copy_iso,
-    win_install_grub, win_probe_env,
+    .name           = "windows",
+    .iso_open       = win_iso_open,
+    .iso_has_path   = win_iso_has_path,
+    .iso_close      = win_iso_close,
+    .prepare_store  = win_prepare_store,
+    .copy_iso       = win_copy_iso,
+    .partition_disk = win_partition_disk,
+    .install_grub   = win_install_grub,
+    .probe_env      = win_probe_env,
 };
 const frugal_backend_t *backend_get(void) { return &g_backend; }

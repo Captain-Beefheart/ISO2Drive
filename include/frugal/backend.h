@@ -34,6 +34,13 @@ typedef struct frugal_backend {
     int (*prepare_store)(const char *store_root);
     int (*copy_iso)(const char *iso_path, const char *store_root, char **out_grub_path);
 
+    /* --- greenfield disk provisioning (Linux only) --- */
+    /* Partition + format + mount a BLANK disk (GPT: BIOS-boot + ESP + ext4 data).
+     * Fills *out_esp_dir and *out_store_root (caller frees). Destructive; honors
+     * commit (dry-run prints the plan). */
+    int (*partition_disk)(const char *disk, bool commit,
+                          char **out_esp_dir, char **out_store_root);
+
     /* --- boot install --- */
     int (*install_grub)(const frugal_target_t *tgt, const char *store_root);
     int (*probe_env)(void);

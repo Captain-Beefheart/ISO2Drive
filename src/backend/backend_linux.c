@@ -1,5 +1,5 @@
 /* Linux host backend (for the AppImage frontend).
- * Greenfield: owns a target disk, installs GRUB for UEFI + BIOS. */
+ * Greenfield: owns a target disk, partitions it, and installs GRUB for UEFI + BIOS. */
 #include "frugal/backend.h"
 #include "frugal/isolist.h"
 #include "frugal/grubcfg.h"
@@ -34,6 +34,23 @@ static int run_step(bool commit, const char *cmd) {
     return rc;
 }
 
+static bool have_cmd(const char *name) {
+    char *c = str_format("command -v %s >/dev/null 2>&1", name);
+    if (!c) return false;
+    int rc = system(c);
+    free(c);
+    return rc == 0;
+}
+
+/* Partition N's device node: /dev/sdb -> /dev/sdb1, /dev/nvme0n1 -> /dev/nvme0n1p1. */
+static char *part_dev(const char *disk, int n) {
+    size_t len = strlen(disk);
+    int needs_p = (len > 0 && disk[len - 1] >= '0' && disk[len - 1] <= '9');
+    return str_format("%s%s%d", disk, needs_p ? "p" : "", n);
+}
+
+/* ---- ISO inspection ---- */
+
 static void *lin_iso_open(const char *iso) {
     char *q = sh_quote(iso);
     if (!q) return NULL;
@@ -48,6 +65,8 @@ static void *lin_iso_open(const char *iso) {
 }
 static bool lin_iso_has_path(void *h, const char *p) { return isolist_has((isolist_t *)h, p); }
 static void lin_iso_close(void *h) { isolist_free((isolist_t *)h); }
+
+/* ---- store management ---- */
 
 static int lin_prepare_store(const char *store_root) {
     ensure_dir(store_root);
@@ -73,6 +92,114 @@ static int lin_copy_iso(const char *iso, const char *store_root, char **out_grub
     free(base); free(dst);
     return rc;
 }
+
+/* ---- greenfield disk provisioning ---- */
+
+/* True if `disk` is the whole disk backing the running root filesystem. */
+static bool disk_is_root_disk(const char *disk) {
+    char *out = run_capture(
+        "root=$(findmnt -no SOURCE / 2>/dev/null); "
+        "lsblk -no PKNAME \"$root\" 2>/dev/null | head -n1");
+    if (!out) return false;
+    char *nl = strchr(out, '\n');
+    if (nl) *nl = '\0';
+    bool r = false;
+    if (*out) {
+        char *dev = str_format("/dev/%s", out);
+        if (dev && strcmp(dev, disk) == 0) r = true;
+        free(dev);
+    }
+    free(out);
+    return r;
+}
+
+static bool disk_has_mounts(const char *qdisk) {
+    char *cmd = str_format("lsblk -no MOUNTPOINT %s 2>/dev/null | grep -q .", qdisk);
+    if (!cmd) return false;
+    int rc = system(cmd);
+    free(cmd);
+    return rc == 0;
+}
+
+/* Partition (GPT: 1 MiB BIOS-boot + 300 MiB FAT32 ESP + ext4 data), format,
+ * and mount a blank disk. Returns the ESP mount dir and the store root. */
+static int lin_partition_disk(const char *disk, bool commit,
+                              char **out_esp, char **out_store) {
+    if (!disk) { log_err("partition_disk: no target disk"); return -1; }
+    char *qdisk = sh_quote(disk);
+    if (!qdisk) return -1;
+
+    /* Show what is about to be destroyed (read-only). */
+    char *lscmd = str_format("lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINT %s 2>/dev/null", qdisk);
+    if (lscmd) {
+        char *o = run_capture(lscmd);
+        free(lscmd);
+        if (o && *o) log_info("target %s current layout:\n%s", disk, o);
+        free(o);
+    }
+
+    /* Safety: never wipe the system disk or a disk with mounted partitions. */
+    if (disk_is_root_disk(disk)) {
+        log_err("refusing: %s holds the running root filesystem", disk);
+        free(qdisk); return -1;
+    }
+    if (disk_has_mounts(qdisk)) {
+        if (commit) {
+            log_err("refusing: %s has mounted partitions; unmount them first", disk);
+            free(qdisk); return -1;
+        }
+        log_warn("%s has mounted partitions; --commit will refuse until they are unmounted", disk);
+    }
+
+    if (commit) {
+        const char *need[] = { "sgdisk", "mkfs.fat", "mkfs.ext4", "partprobe", NULL };
+        for (int i = 0; need[i]; ++i)
+            if (!have_cmd(need[i])) {
+                log_err("missing tool: %s (need gptfdisk, dosfstools, e2fsprogs, parted)", need[i]);
+                free(qdisk); return -1;
+            }
+    }
+
+    char *p2 = part_dev(disk, 2), *p3 = part_dev(disk, 3);
+    char *qp2 = sh_quote(p2), *qp3 = sh_quote(p3);
+    const char *esp_mnt = "/run/iso2drive/esp";
+    const char *data_mnt = "/run/iso2drive/data";
+    int fail = 0;
+
+    log_warn("GREENFIELD: this ERASES all data on %s", disk);
+
+    struct { const char *fmt; char *arg; } steps[] = {
+        { "wipefs -a %s", qdisk },
+        { "sgdisk --zap-all %s", qdisk },
+        { "sgdisk -n 1:0:+1MiB   -t 1:ef02 -c 1:\"BIOS boot\" %s", qdisk },
+        { "sgdisk -n 2:0:+300MiB -t 2:ef00 -c 2:\"ESP\" %s",       qdisk },
+        { "sgdisk -n 3:0:0       -t 3:8300 -c 3:\"ISO2Drive\" %s", qdisk },
+        { "partprobe %s ; udevadm settle", qdisk },
+        { "mkfs.fat -F32 -n ISO2DRV_ESP %s", qp2 },
+        { "mkfs.ext4 -F -L ISO2DRIVE %s", qp3 },
+    };
+    for (size_t i = 0; i < sizeof steps / sizeof steps[0]; ++i) {
+        char *c = str_format(steps[i].fmt, steps[i].arg);
+        if (c) { fail |= (run_step(commit, c) != 0); free(c); } else fail = 1;
+    }
+
+    char *mk = str_format("mkdir -p %s %s", esp_mnt, data_mnt);
+    if (mk) { fail |= (run_step(commit, mk) != 0); free(mk); }
+    char *m1 = str_format("mount %s %s", qp2, esp_mnt);
+    if (m1) { fail |= (run_step(commit, m1) != 0); free(m1); }
+    char *m2 = str_format("mount %s %s", qp3, data_mnt);
+    if (m2) { fail |= (run_step(commit, m2) != 0); free(m2); }
+
+    if (out_esp)   *out_esp   = xstrdup(esp_mnt);
+    if (out_store) *out_store = str_format("%s/iso2drive", data_mnt);
+
+    free(qdisk); free(p2); free(p3); free(qp2); free(qp3);
+    if (!fail && commit)
+        log_info("partitioned + mounted: ESP=%s data=%s", esp_mnt, data_mnt);
+    return fail ? -1 : 0;
+}
+
+/* ---- boot install ---- */
 
 /* Real GRUB install: UEFI (removable, no NVRAM) and/or BIOS (core.img on disk),
  * then drop the master grub.cfg where grub-install created its /grub dir.
@@ -148,9 +275,14 @@ static int lin_probe_env(void) {
 }
 
 static const frugal_backend_t g_backend = {
-    "linux",
-    lin_iso_open, lin_iso_has_path, lin_iso_close,
-    lin_prepare_store, lin_copy_iso,
-    lin_install_grub, lin_probe_env,
+    .name           = "linux",
+    .iso_open       = lin_iso_open,
+    .iso_has_path   = lin_iso_has_path,
+    .iso_close      = lin_iso_close,
+    .prepare_store  = lin_prepare_store,
+    .copy_iso       = lin_copy_iso,
+    .partition_disk = lin_partition_disk,
+    .install_grub   = lin_install_grub,
+    .probe_env      = lin_probe_env,
 };
 const frugal_backend_t *backend_get(void) { return &g_backend; }
