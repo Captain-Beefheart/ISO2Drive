@@ -117,39 +117,41 @@ iso2drive add C:\iso2drive ubuntu-24.04.iso --flash --commit
 The Windows backend matches whatever firmware mode Windows already uses:
 
 - **UEFI** — mounts the existing ESP, copies `grubx64.efi` into `\EFI\ISO2Drive\`,
-  and adds a firmware boot entry with `bcdedit` (Windows Boot Manager stays intact;
-  GRUB's menu chainloads Windows).
+  and adds a firmware boot entry with `bcdedit`. When **Secure Boot** is on and a
+  signed shim is present, it registers `shimx64.efi` (which chain-loads GRUB) so
+  it boots without disabling Secure Boot. Windows Boot Manager stays intact;
+  GRUB's menu chainloads Windows.
 - **BIOS** — leaves the MBR alone and adds a `bcdedit` *bootsector* entry that
   chainloads a grub2 loader dropped on `C:` (EasyBCD-style).
 
 `doctor` (and the start of every flash) reports **Secure Boot / Fast Startup /
 BitLocker**, which are the usual reasons a Windows-side Linux dual-boot fails.
 
-#### Required GRUB binaries (`assets/grub/`)
+#### GRUB binaries (`assets/grub/`)
 
-Windows has no `grub-install`, so the actual GRUB binaries must be bundled. Point
-at them with `--assets <dir>` (default `assets/grub`):
+Windows has no `grub-install`, so the GRUB binaries must be supplied. Check what's
+present (and what each is for) any time:
+
+```bash
+iso2drive assets                       # report present/missing under assets/grub
+iso2drive assets --fetch               # build/assemble them (needs a grub toolchain)
+```
+
+`--fetch` runs [`scripts/get-grub-assets.sh`](scripts/get-grub-assets.sh), which
+**builds** `grubx64.efi` with `grub-mkstandalone` (baking in
+[`efi-prelude.cfg`](assets/grub/efi-prelude.cfg) so it finds our menu), **copies**
+the locally installed Microsoft-signed shim (`shim-signed`) for Secure Boot, and
+picks up `g2ldr`/`g2ldr.mbr` from a local Grub2Win. It's meant to run on the Linux
+box the AppImage targets (or MSYS2 with a grub package). The binaries aren't
+committed — they're GPL and must be built with our config — so run the script (or
+drop your own into `assets/grub/`, overridable with `--assets <dir>`):
 
 ```
 assets/grub/
-  x86_64-efi/grubx64.efi     # UEFI
-  i386-pc/g2ldr              # BIOS loader   (from Grub2Win, or grub-mkimage)
-  i386-pc/g2ldr.mbr          # BIOS boot sector
-```
-
-Build the standalone EFI once on any Linux box:
-
-```bash
-grub-mkstandalone -O x86_64-efi -o grubx64.efi \
-  --modules="part_gpt part_msdos fat ntfs ext2 search search_fs_file configfile loopback chain normal" \
-  "boot/grub/grub.cfg=./efi-prelude.cfg"
-```
-
-where `efi-prelude.cfg` finds the ESP copy of our menu and loads it:
-
-```
-search --no-floppy --file --set=root /EFI/ISO2Drive/grub.cfg
-configfile /EFI/ISO2Drive/grub.cfg
+  efi-prelude.cfg            # committed (text) — baked into grubx64.efi
+  x86_64-efi/grubx64.efi     # built by the script
+  x86_64-efi/shimx64.efi     # optional, Secure Boot (+ mmx64.efi)
+  i386-pc/g2ldr, g2ldr.mbr   # BIOS
 ```
 
 ## Bootable USB (raw / dd-style flash)
@@ -170,26 +172,27 @@ iso2drive write-usb ubuntu-24.04.iso 2 --commit --verify   # flash + verify (Win
 - `--verify` reads the device back and compares it against the ISO.
 - A live progress bar shows write (and verify) progress.
 
-### File-copy USB (Rufus "ISO mode", Linux)
+### File-copy USB (Rufus "ISO mode")
 
 The alternative to raw flash: partition + format the USB, **copy the ISO's files**,
-and make it boot — leaving a normal, writable FAT32 filesystem. Use it for Windows
-ISOs or when you want to add/remove files on the stick. Linux backend only:
+and make it boot — leaving a normal, writable filesystem. Use it for Windows ISOs
+or when you want to add/remove files on the stick. On **both** backends:
 
 ```bash
-iso2drive copy-usb ubuntu-24.04.iso /dev/sdb --commit          # FAT32, bootable
-iso2drive copy-usb win11.iso /dev/sdb --fs ntfs --commit       # NTFS (BIOS/large WIM)
+iso2drive copy-usb ubuntu-24.04.iso /dev/sdb --commit          # Linux, FAT32
+iso2drive copy-usb win11.iso 2 --fs fat32 --commit             # Windows, drive 2
 ```
 
-- MBR + a single active partition; `--fs fat32` (default, UEFI + BIOS), `exfat`/`ntfs`
+- One active partition; `--fs fat32` (default, UEFI + BIOS), `exfat`/`ntfs`
   (data / large files, not UEFI-bootable — UEFI firmware only reads FAT).
 - **UEFI** boots via the ISO's copied `/EFI/BOOT/BOOTX64.EFI` (present in most ISOs).
-- **BIOS**: isolinux-based Linux ISOs are converted to `syslinux` and given MBR boot
-  code; Windows ISOs BIOS-boot via their own `bootmgr` (active partition).
-- Best-effort: `syslinux` must match the ISO's isolinux version, and ISOs that hide
-  their EFI loader in an el-torito `efi.img` (not loose files) need the raw path.
-
-Needs `parted`, `dosfstools`/`exfatprogs`/`ntfs-3g`, `syslinux`, and `bsdtar`.
+- **BIOS**: Linux (isolinux) ISOs are converted to `syslinux` + MBR boot code;
+  Windows ISOs BIOS-boot via their own `bootmgr` (active partition).
+- **Big Windows WIMs**: `install.wim` > 4 GB is auto-split to `install.swm` so it
+  fits FAT32 (Linux: `wimlib-imagex`; Windows: `dism /Split-Image`).
+- Backends: Linux uses `parted` + `mkfs` + `bsdtar` (+ `syslinux`); Windows uses
+  `diskpart` + `tar`. Best-effort — `syslinux` must match the ISO's isolinux
+  version, and ISOs hiding their EFI loader in an el-torito `efi.img` need the raw path.
 
 ## What's real vs stubbed
 
@@ -200,10 +203,12 @@ on both backends** — Linux (`grub-install` x2) and Windows (ESP + `bcdedit`
 orchestration, gated on the bundled GRUB binaries above); **bootable-USB raw flash**
 on both backends (`list-disks` + `write-usb`, with progress bar, read-back verify,
 and system-disk / non-removable guards); **persistence** (Linux: labelled ext4
-writable image for Ubuntu/casper + Debian live, with the `(persistent)` entry);
-**file-copy USB** (Linux: partition + format + copy files + syslinux/EFI boot).
+writable image for Ubuntu/casper + Debian live, `--persist-label` override, and the
+`(persistent)` entry); **file-copy USB on both backends** (Linux `parted`+`syslinux`,
+Windows `diskpart`, with `install.wim` auto-split); **Secure Boot shim** on the
+Windows UEFI install; and an `assets` checker + [build script](scripts/get-grub-assets.sh).
 
-**Not yet implemented:** file-copy USB on Windows (needs the diskpart/bootsect path).
+**Not yet implemented:** Windows persistence (needs an ext4 image library).
 
 ## Per-distro boot logic
 
@@ -216,14 +221,12 @@ openSUSE) only boot ISOs that ship one.
 
 ## Roadmap
 
-1. **Windows polish** — bundle/auto-fetch the GRUB binaries; add a Secure Boot
-   signed-shim path so `--commit` works without disabling Secure Boot; a Windows
-   file-copy USB path (diskpart + format + bootsect).
-2. **Persistence polish** — `writable`-label support for newest Ubuntu; dedicated
-   persistence partition option; Windows persistence via an ext4 image library.
-3. **WIM handling** — split `install.wim` > 4 GB so Windows ISOs fit a FAT32 UEFI
-   USB via `copy-usb`.
-4. Validate/extend the profile table against real images; multi-ISO menu polish.
+1. **Windows persistence** — needs an ext4 image library (e.g. lwext4) to create
+   the writable store from Windows; currently Linux-only.
+2. **Dedicated persistence partition** — a real labelled partition option in the
+   greenfield `provision` flow, as an alternative to the file image.
+3. **Validate against real images** — the profile table (`src/core/profile.c`) and
+   every `--commit` path still need checking on real ISOs / hardware.
 
 ## Testing status
 

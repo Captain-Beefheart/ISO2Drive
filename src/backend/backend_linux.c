@@ -473,7 +473,20 @@ static int lin_copy_usb(const char *iso, const char *device, const char *fs,
 
         if (win && file_exists(win)) {
             log_info("Windows ISO: BIOS boots via bootmgr (active partition set); UEFI via /efi/boot");
-            if (is_fat) log_warn("install.wim can exceed FAT32's 4GB limit; if the copy failed, use --fs ntfs (BIOS only) or split the WIM");
+            if (is_fat) {
+                if (have_cmd("wimlib-imagex")) {
+                    log_info("splitting install.wim if it exceeds FAT32's 4GB limit");
+                    char *c = str_format(
+                        "sz=$(stat -c%%s %s/sources/install.wim 2>/dev/null || echo 0); "
+                        "if [ \"$sz\" -gt 4000000000 ]; then "
+                        "wimlib-imagex split %s/sources/install.wim %s/sources/install.swm 3800 "
+                        "&& rm -f %s/sources/install.wim; else echo 'install.wim fits FAT32'; fi",
+                        mnt, mnt, mnt, mnt);
+                    if (c) { fail |= (run_step(commit, c) != 0); free(c); }
+                } else {
+                    log_warn("install wimtools (wimlib-imagex) to auto-split install.wim > 4GB, or use --fs ntfs (BIOS only)");
+                }
+            }
         } else if (isocfg && file_exists(isocfg) && is_fat) {
             const char *mbrbin = syslinux_mbr_bin();
             log_info("isolinux-based ISO: converting to syslinux for BIOS boot");

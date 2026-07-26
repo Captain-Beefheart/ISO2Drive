@@ -3,3 +3,9 @@
 /iso2drive.exe
 /iso2drive_lin.exe
 /out/
+
+# Built/fetched GRUB binaries — produced by scripts/get-grub-assets.sh, not committed
+# (GPL binaries + must be built with our config; efi-prelude.cfg is kept).
+/assets/grub/x86_64-efi/
+/assets/grub/i386-pc/
+/assets/grub/SHA256SUMS

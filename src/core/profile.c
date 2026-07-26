@@ -1,11 +1,13 @@
 #include "frugal/profile.h"
 #include <stddef.h>
 
-/* Detection markers: a stable file that identifies each live-ISO family. */
-static const char *det_casper[] = { "/casper/vmlinuz", NULL };
-static const char *det_debian[] = { "/live/filesystem.squashfs", NULL };
-static const char *det_fedora[] = { "/LiveOS/squashfs.img", NULL };
-static const char *det_arch[]   = { "/arch/boot/x86_64/vmlinuz-linux", NULL };
+/* Detection markers: any one identifies the family (Ubuntu/Mint/Pop!_OS share
+ * casper; Kali/Tails share Debian live; Manjaro/EndeavourOS share archiso). */
+static const char *det_casper[] = { "/casper/vmlinuz", "/casper/filesystem.squashfs", NULL };
+static const char *det_debian[] = { "/live/filesystem.squashfs", "/live/vmlinuz", NULL };
+static const char *det_fedora[] = { "/LiveOS/squashfs.img", "/images/install.img", NULL };
+static const char *det_arch[]   = { "/arch/boot/x86_64/vmlinuz-linux", "/arch/version",
+                                    "/manjaro/x86_64/rootfs.sfs", NULL };
 static const char *det_suse[]   = { "/boot/x86_64/loader/linux", NULL };
 
 /*

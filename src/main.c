@@ -38,6 +38,56 @@ static int cmd_doctor(const frugal_backend_t *b) {
     return 0;
 }
 
+static int cmd_assets(int argc, char **argv) {
+    const char *dir = "assets/grub";
+    int fetch = 0;
+    for (int i = 2; i < argc; ++i) {
+        if      (!strcmp(argv[i], "--assets") && i + 1 < argc) dir = argv[++i];
+        else if (!strcmp(argv[i], "--fetch")) fetch = 1;
+    }
+    ui_banner();
+    if (fetch) {
+        char *cmd = str_format("sh scripts/get-grub-assets.sh \"%s\"", dir);
+        if (cmd) {
+            log_info("running: %s", cmd);
+            int rc = system(cmd);
+            free(cmd);
+            if (rc != 0)
+                log_warn("fetch/build script returned %d — needs a grub toolchain (run on Linux/MSYS2 w/ grub-efi)", rc);
+        }
+    }
+    log_info("checking GRUB assets in: %s", dir);
+    struct { const char *rel; const char *what; int required; } items[] = {
+        { "x86_64-efi/grubx64.efi", "UEFI GRUB",                        1 },
+        { "x86_64-efi/shimx64.efi", "signed shim (for Secure Boot)",    0 },
+        { "x86_64-efi/mmx64.efi",   "MokManager (with shim)",           0 },
+        { "i386-pc/g2ldr",          "BIOS loader",                      1 },
+        { "i386-pc/g2ldr.mbr",      "BIOS boot sector",                 1 },
+    };
+    int missing = 0;
+    for (size_t i = 0; i < sizeof items / sizeof items[0]; ++i) {
+        char *p = str_format("%s/%s", dir, items[i].rel);
+        int ok = p && file_exists(p);
+        printf("  [%s] %-26s %s%s\n", ok ? "x" : " ", items[i].rel,
+               items[i].what, items[i].required ? " (required)" : "");
+        if (!ok && items[i].required) ++missing;
+        free(p);
+    }
+    printf("\n");
+    if (missing) {
+        log_warn("%d required asset(s) missing. Build them once on any Linux box:", missing);
+        printf(
+            "    grub-mkstandalone -O x86_64-efi -o grubx64.efi \\\n"
+            "      --modules=\"part_gpt part_msdos fat ntfs ext2 search search_fs_file configfile loopback chain normal\" \\\n"
+            "      \"boot/grub/grub.cfg=./efi-prelude.cfg\"\n"
+            "  Secure Boot: add the distro's signed shimx64.efi (+ mmx64.efi).\n"
+            "  BIOS: take g2ldr + g2ldr.mbr from Grub2Win, or grub-mkimage (i386-pc).\n");
+        return 1;
+    }
+    log_info("all required assets present");
+    return 0;
+}
+
 static int cmd_format_disk(const frugal_backend_t *b, int argc, char **argv) {
     const char *disk = argv[2];
     bool commit = false;
@@ -57,12 +107,13 @@ static int cmd_provision(const frugal_backend_t *b, int argc, char **argv) {
     const char *disk = argv[2];
     const char *iso  = argv[3];
     bool commit = false, do_uefi = true, do_bios = true;
-    const char *persist_size = NULL;
+    const char *persist_size = NULL, *persist_label = NULL;
     for (int i = 4; i < argc; ++i) {
         if      (!strcmp(argv[i], "--commit"))  commit = true;
         else if (!strcmp(argv[i], "--no-uefi")) do_uefi = false;
         else if (!strcmp(argv[i], "--no-bios")) do_bios = false;
-        else if (!strcmp(argv[i], "--persist") && i + 1 < argc) persist_size = argv[++i];
+        else if (!strcmp(argv[i], "--persist")       && i + 1 < argc) persist_size  = argv[++i];
+        else if (!strcmp(argv[i], "--persist-label") && i + 1 < argc) persist_label = argv[++i];
         else log_warn("ignoring unknown option: %s", argv[i]);
     }
 
@@ -94,8 +145,9 @@ static int cmd_provision(const frugal_backend_t *b, int argc, char **argv) {
     bool do_persist = false;
     if (persist_size) {
         if (p && p->persist_param) {
+            const char *label = persist_label ? persist_label : p->persist_label;
             char *dm = path_parent(store);
-            do_persist = dm && b->create_persistence(dm, p->persist_label, p->persist_conf, persist_size, true) == 0;
+            do_persist = dm && b->create_persistence(dm, label, p->persist_conf, persist_size, true) == 0;
             free(dm);
         } else {
             log_warn("persistence not supported for this distro family; ignoring --persist");
@@ -104,7 +156,7 @@ static int cmd_provision(const frugal_backend_t *b, int argc, char **argv) {
 
     char *base    = path_basename_noext(iso);
     char *slug    = str_slugify(base);
-    char *title   = xstrdup(base ? base : "linux");
+    char *title   = (p && base) ? str_format("%s [%s]", base, p->name) : xstrdup(base ? base : "linux");
     char *entries = str_format("%s/entries.d", store);
     if (slug && title && entries && grubcfg_write_entry(entries, slug, title, grub_path, p, do_persist) == 0)
         log_info("  entry: entries.d/%s.cfg%s", slug, do_persist ? " (persistent)" : "");
@@ -169,13 +221,14 @@ static int cmd_add(const frugal_backend_t *b, int argc, char **argv) {
     frugal_target_t tgt = {0};
     tgt.do_uefi = true;
     bool flash = false;
-    const char *persist_size = NULL;
+    const char *persist_size = NULL, *persist_label = NULL;
     for (int i = 4; i < argc; ++i) {
-        if      (!strcmp(argv[i], "--esp")      && i + 1 < argc) { tgt.esp_dir    = argv[++i]; flash = true; }
-        else if (!strcmp(argv[i], "--disk")     && i + 1 < argc) { tgt.disk       = argv[++i]; tgt.do_bios = true; }
-        else if (!strcmp(argv[i], "--boot-dir") && i + 1 < argc) { tgt.boot_dir   = argv[++i]; }
-        else if (!strcmp(argv[i], "--assets")   && i + 1 < argc) { tgt.assets_dir = argv[++i]; }
-        else if (!strcmp(argv[i], "--persist")  && i + 1 < argc) { persist_size   = argv[++i]; }
+        if      (!strcmp(argv[i], "--esp")           && i + 1 < argc) { tgt.esp_dir    = argv[++i]; flash = true; }
+        else if (!strcmp(argv[i], "--disk")          && i + 1 < argc) { tgt.disk       = argv[++i]; tgt.do_bios = true; }
+        else if (!strcmp(argv[i], "--boot-dir")      && i + 1 < argc) { tgt.boot_dir   = argv[++i]; }
+        else if (!strcmp(argv[i], "--assets")        && i + 1 < argc) { tgt.assets_dir = argv[++i]; }
+        else if (!strcmp(argv[i], "--persist")       && i + 1 < argc) { persist_size   = argv[++i]; }
+        else if (!strcmp(argv[i], "--persist-label") && i + 1 < argc) { persist_label  = argv[++i]; }
         else if (!strcmp(argv[i], "--flash"))   { flash = true; }
         else if (!strcmp(argv[i], "--commit"))  { tgt.commit = true; }
         else if (!strcmp(argv[i], "--no-uefi")) { tgt.do_uefi = false; }
@@ -206,8 +259,9 @@ static int cmd_add(const frugal_backend_t *b, int argc, char **argv) {
     bool do_persist = false;
     if (persist_size) {
         if (p && p->persist_param) {
+            const char *label = persist_label ? persist_label : p->persist_label;
             char *dm = path_parent(store);
-            int prc = dm ? b->create_persistence(dm, p->persist_label, p->persist_conf, persist_size, tgt.commit) : -1;
+            int prc = dm ? b->create_persistence(dm, label, p->persist_conf, persist_size, tgt.commit) : -1;
             do_persist = (prc == 0);
             if (prc != 0) log_warn("persistence not created; entry will be non-persistent");
             free(dm);
@@ -218,7 +272,7 @@ static int cmd_add(const frugal_backend_t *b, int argc, char **argv) {
 
     char *base    = path_basename_noext(iso);
     char *slug    = str_slugify(base);
-    char *title   = xstrdup(base ? base : "linux");
+    char *title   = (p && base) ? str_format("%s [%s]", base, p->name) : xstrdup(base ? base : "linux");
     char *entries = str_format("%s/entries.d", store);
 
     int rc = 1;
@@ -248,6 +302,7 @@ static void usage(void) {
         "    iso2drive detect <iso>                        inspect an ISO\n"
         "    iso2drive gen-cfg <out.cfg>                   write the master grub.cfg\n"
         "    iso2drive doctor                              report firmware / boot environment\n"
+        "    iso2drive assets [--fetch] [--assets <dir>]   check (or build/fetch) the GRUB binaries\n"
         "    iso2drive add <store-dir> <iso> [flash opts]  stage an ISO (+ optionally flash)\n"
         "    iso2drive format-disk <disk> [--commit]       GREENFIELD: wipe+partition a blank disk\n"
         "    iso2drive provision <disk> <iso> [--commit]   GREENFIELD: partition + stage + flash\n"
@@ -281,6 +336,7 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "detect")  && argc == 3) return cmd_detect(b, argv[2]);
     if (!strcmp(argv[1], "gen-cfg") && argc == 3) return cmd_gencfg(argv[2]);
     if (!strcmp(argv[1], "doctor")  && argc == 2) return cmd_doctor(b);
+    if (!strcmp(argv[1], "assets")) return cmd_assets(argc, argv);
     if (!strcmp(argv[1], "format-disk") && argc >= 3) return cmd_format_disk(b, argc, argv);
     if (!strcmp(argv[1], "provision")   && argc >= 4) return cmd_provision(b, argc, argv);
     if (!strcmp(argv[1], "list-disks")  && argc == 2) return cmd_list_disks(b);

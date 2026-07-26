@@ -107,39 +107,61 @@ static char *to_backslash(const char *s) {
     return o;
 }
 
-/* UEFI: drop a standalone grubx64.efi on the existing ESP and add a firmware
- * boot entry that points at it. Windows' own bootmgfw.efi is never touched. */
+/* UEFI: drop GRUB on the existing ESP and add a firmware boot entry pointing at
+ * it. Windows' own bootmgfw.efi is never touched. When Secure Boot is on and a
+ * signed shim is available, chain through the shim so GRUB loads without
+ * disabling Secure Boot. */
 static int win_uefi_install(const char *assets, const char *store_root, bool commit) {
-    char *efi_src = str_format("%s/x86_64-efi/grubx64.efi", assets);
-    if (!efi_src) return -1;
-    if (!file_exists(efi_src)) {
-        log_warn("GRUB EFI not found at %s", efi_src);
-        log_warn("build it once with grub-mkstandalone (see README), then drop it there.");
-        if (commit) { free(efi_src); return -1; }
+    char *grub_src = str_format("%s/x86_64-efi/grubx64.efi", assets);
+    char *shim_src = str_format("%s/x86_64-efi/shimx64.efi", assets);
+    char *mm_src   = str_format("%s/x86_64-efi/mmx64.efi", assets);
+    if (!grub_src || !shim_src || !mm_src) { free(grub_src); free(shim_src); free(mm_src); return -1; }
+
+    int  sb        = (win_secure_boot_enabled() == 1);
+    int  have_shim = file_exists(shim_src);
+    int  use_shim  = sb && have_shim;
+    if (sb && !have_shim)
+        log_warn("Secure Boot is ON but no signed shim at %s — add one (iso2drive assets) or disable Secure Boot", shim_src);
+
+    if (!file_exists(grub_src)) {
+        log_warn("GRUB EFI not found at %s", grub_src);
+        log_warn("run `iso2drive assets --fetch` (see README) to build it, then retry");
+        if (commit) { free(grub_src); free(shim_src); free(mm_src); return -1; }
     }
-    char *efi_bs   = to_backslash(efi_src);
+
+    const char *boot_efi = use_shim ? "shimx64.efi" : "grubx64.efi";
+    char *grub_bs  = to_backslash(grub_src);
+    char *shim_bs  = to_backslash(shim_src);
+    char *mm_bs    = to_backslash(mm_src);
     char *store_bs = to_backslash(store_root);
     char dl = win_free_drive_letter();
     if (!dl) dl = 'S';
 
     int fail = 0;
-    log_info("UEFI install via the existing ESP, mounted at %c:", dl);
+    log_info("UEFI install via the existing ESP at %c: (%s)", dl, use_shim ? "signed shim + GRUB" : "GRUB");
     stepf(commit, &fail, "mountvol %c: /s", dl);
     stepf(commit, &fail, "if not exist %c:\\EFI\\ISO2Drive mkdir %c:\\EFI\\ISO2Drive", dl, dl);
-    stepf(commit, &fail, "copy /Y \"%s\" %c:\\EFI\\ISO2Drive\\grubx64.efi", efi_bs, dl);
+    stepf(commit, &fail, "copy /Y \"%s\" %c:\\EFI\\ISO2Drive\\grubx64.efi", grub_bs, dl);
+    if (use_shim) {
+        stepf(commit, &fail, "copy /Y \"%s\" %c:\\EFI\\ISO2Drive\\shimx64.efi", shim_bs, dl);
+        if (file_exists(mm_src))
+            stepf(commit, &fail, "copy /Y \"%s\" %c:\\EFI\\ISO2Drive\\mmx64.efi", mm_bs, dl);
+    }
     stepf(commit, &fail, "copy /Y \"%s\\grub.cfg\" %c:\\EFI\\ISO2Drive\\grub.cfg", store_bs, dl);
 
     char *guid = bcd_guid(commit, "bcdedit /copy {bootmgr} /d \"ISO2Drive (GRUB)\"");
     if (!guid) fail = 1;
     else {
-        stepf(commit, &fail, "bcdedit /set %s path \\EFI\\ISO2Drive\\grubx64.efi", guid);
+        stepf(commit, &fail, "bcdedit /set %s path \\EFI\\ISO2Drive\\%s", guid, boot_efi);
         stepf(commit, &fail, "bcdedit /set {fwbootmgr} displayorder %s /addfirst", guid);
         free(guid);
     }
     stepf(commit, &fail, "mountvol %c: /d", dl);
 
-    free(efi_src); free(efi_bs); free(store_bs);
-    if (!fail && commit) log_info("UEFI GRUB entry installed (its menu chainloads Windows)");
+    free(grub_src); free(shim_src); free(mm_src);
+    free(grub_bs); free(shim_bs); free(mm_bs); free(store_bs);
+    if (!fail && commit) log_info("UEFI GRUB entry installed%s (its menu chainloads Windows)",
+                                  use_shim ? " via signed shim" : "");
     return fail ? -1 : 0;
 }
 
@@ -280,12 +302,82 @@ static int win_write_usb(const char *iso, const char *device,
     return rc;
 }
 
+/* File-copy USB via diskpart: partition + format + active, copy the ISO's files,
+ * and (FAT32) split install.wim so Windows ISOs fit. Boots UEFI via the ISO's
+ * copied \EFI\BOOT and Windows-BIOS via bootmgr on the active partition. */
 static int win_copy_usb(const char *iso, const char *device, const char *fs,
                         bool commit, bool force) {
-    (void)iso; (void)device; (void)fs; (void)commit; (void)force;
-    log_err("file-copy USB is not yet implemented on Windows");
-    log_err("use raw flash (write-usb) for isohybrid Linux ISOs, or the Linux/AppImage backend");
-    return -1;
+    int drive = parse_drive(device);
+    if (drive < 0) {
+        log_err("could not parse a drive number from '%s' (use e.g. 2 or \\\\.\\PhysicalDrive2)", device);
+        return -1;
+    }
+    if (!fs) fs = "fat32";
+    int is_fat = (strcmp(fs, "fat32") == 0);
+    const char *dpfs = is_fat ? "fat32" : (strcmp(fs, "exfat") == 0 ? "exfat" : "ntfs");
+
+    uint64_t sz = winusb_size(drive);
+    int rem = winusb_is_removable(drive);
+    int sys = winusb_hosts_system(drive);
+    log_info("target: PhysicalDrive%d  fs=%s  size=%llu MiB  removable=%s  system=%s",
+             drive, fs, (unsigned long long)(sz / (1024ull * 1024ull)),
+             rem == 1 ? "yes" : rem == 0 ? "no" : "?", sys == 1 ? "YES" : "no");
+    if (sys == 1) { log_err("refusing: PhysicalDrive%d hosts the Windows system volume", drive); return -1; }
+    if (!is_fat) log_warn("fs=%s is not UEFI-bootable (UEFI needs FAT)", fs);
+
+    char dl = win_free_drive_letter();
+    if (!dl) dl = 'U';
+    char *script = str_format(
+        "select disk %d\r\nclean\r\nconvert mbr\r\ncreate partition primary\r\n"
+        "active\r\nformat fs=%s quick label=ISO2DRIVE\r\nassign letter=%c\r\n",
+        drive, dpfs, dl);
+    if (!script) return -1;
+
+    if (!commit) {
+        log_info("(dry-run) would file-copy %s -> PhysicalDrive%d (drive %c:):", iso, drive, dl);
+        log_info("  diskpart /s <script>:\n%s", script);
+        log_info("  tar -C %c:\\ -xf \"%s\"        (copy the ISO's files)", dl, iso);
+        log_info("  FAT32: dism /Split-Image install.wim -> install.swm if > 4GB");
+        log_info("  boots: Windows via bootmgr (active); UEFI via \\EFI\\BOOT\\BOOTX64.EFI");
+        if (rem == 0) log_warn("PhysicalDrive%d is NOT removable; --commit will need --force", drive);
+        log_info("re-run elevated with --commit to write");
+        free(script);
+        return 0;
+    }
+    if (!win_is_elevated()) { log_err("--commit requires an elevated (admin) prompt"); free(script); return -1; }
+    if (rem == 0 && !force) { log_err("PhysicalDrive%d is not removable; pass --force to override", drive); free(script); return -1; }
+
+    int fail = 0;
+    log_warn("FILE-COPY: this ERASES all data on PhysicalDrive%d", drive);
+
+    const char *temp = getenv("TEMP");
+    if (!temp || !*temp) temp = ".";
+    char *spath = str_format("%s\\iso2drive_dp.txt", temp);
+    if (spath && write_file(spath, script) == 0) {
+        stepf(commit, &fail, "diskpart /s \"%s\"", spath);
+    } else { log_err("could not write diskpart script"); fail = 1; }
+
+    stepf(commit, &fail, "tar -C %c:\\ -xf \"%s\"", dl, iso);
+
+    if (!fail && is_fat) {
+        char *wim = str_format("%c:\\sources\\install.wim", dl);
+        if (wim && file_exists(wim)) {
+            log_info("splitting install.wim for FAT32 via DISM");
+            stepf(commit, &fail, "dism /Split-Image /ImageFile:%c:\\sources\\install.wim "
+                                 "/SWMFile:%c:\\sources\\install.swm /FileSize:3800", dl, dl);
+            stepf(commit, &fail, "del /F /Q %c:\\sources\\install.wim", dl);
+        }
+        free(wim);
+    }
+
+    char *efi = str_format("%c:\\EFI\\BOOT\\BOOTX64.EFI", dl);
+    if (efi && file_exists(efi)) log_info("UEFI-bootable: \\EFI\\BOOT present");
+    else log_warn("no \\EFI\\BOOT\\BOOTX64.EFI (isolinux-only Linux ISOs need syslinux; try write-usb)");
+    free(efi);
+
+    free(script); free(spath);
+    if (!fail) log_info("file-copy USB ready on PhysicalDrive%d (drive %c:)", drive, dl);
+    return fail ? -1 : 0;
 }
 
 static int win_list_disks(void) {
