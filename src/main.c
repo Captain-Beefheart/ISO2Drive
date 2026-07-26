@@ -143,6 +143,25 @@ static int cmd_write_usb(const frugal_backend_t *b, int argc, char **argv) {
     return b->write_usb(iso, device, commit, verify, force) ? 1 : 0;
 }
 
+static int cmd_copy_usb(const frugal_backend_t *b, int argc, char **argv) {
+    const char *iso    = argv[2];
+    const char *device = argv[3];
+    const char *fs = "fat32";
+    bool commit = false, force = false;
+    for (int i = 4; i < argc; ++i) {
+        if      (!strcmp(argv[i], "--fs") && i + 1 < argc) fs = argv[++i];
+        else if (!strcmp(argv[i], "--commit")) commit = true;
+        else if (!strcmp(argv[i], "--force"))  force = true;
+        else log_warn("ignoring unknown option: %s", argv[i]);
+    }
+    ui_banner();
+    ui_step(1, 1, "IMAGE", iso);
+    ui_step(2, 1, "DRIVE", device);
+    ui_step(3, commit ? 1 : 0, "FLASH",
+            commit ? "file copy + bootloader" : "dry-run (pass --commit to write)");
+    return b->copy_usb(iso, device, fs, commit, force) ? 1 : 0;
+}
+
 static int cmd_add(const frugal_backend_t *b, int argc, char **argv) {
     const char *store = argv[2];
     const char *iso   = argv[3];
@@ -234,10 +253,12 @@ static void usage(void) {
         "    iso2drive provision <disk> <iso> [--commit]   GREENFIELD: partition + stage + flash\n"
         "    iso2drive list-disks                          list candidate target drives\n"
         "    iso2drive write-usb <iso> <device> [opts]     BOOTABLE USB: raw dd-style flash\n"
+        "    iso2drive copy-usb <iso> <device> [opts]      BOOTABLE USB: file-copy (Linux; Rufus ISO mode)\n"
         "    iso2drive help\n"
         "\n"
-        "  greenfield + write-usb ERASE the target (root/admin, dry-run by default).\n"
+        "  greenfield + write-usb + copy-usb ERASE the target (root/admin, dry-run by default).\n"
         "  write-usb options:  --commit  --verify  --force (allow non-removable targets)\n"
+        "  copy-usb options:   --commit  --force  --fs <fat32|exfat|ntfs> (fat32 = bootable)\n"
         "\n"
         "  flash options for 'add':\n"
         "    --flash          also install boot code (Windows picks UEFI/BIOS automatically)\n"
@@ -264,6 +285,7 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "provision")   && argc >= 4) return cmd_provision(b, argc, argv);
     if (!strcmp(argv[1], "list-disks")  && argc == 2) return cmd_list_disks(b);
     if (!strcmp(argv[1], "write-usb")   && argc >= 4) return cmd_write_usb(b, argc, argv);
+    if (!strcmp(argv[1], "copy-usb")    && argc >= 4) return cmd_copy_usb(b, argc, argv);
     if (!strcmp(argv[1], "add")     && argc >= 4) return cmd_add(b, argc, argv);
     if (!strcmp(argv[1], "help")) { usage(); return 0; }
     usage();

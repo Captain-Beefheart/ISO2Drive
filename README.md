@@ -170,8 +170,26 @@ iso2drive write-usb ubuntu-24.04.iso 2 --commit --verify   # flash + verify (Win
 - `--verify` reads the device back and compares it against the ISO.
 - A live progress bar shows write (and verify) progress.
 
-`write-usb` does the raw/`dd` path only — right for isohybrid Linux ISOs. Windows
-ISOs and >4 GB files on FAT need the file-copy + syslinux path (roadmap).
+### File-copy USB (Rufus "ISO mode", Linux)
+
+The alternative to raw flash: partition + format the USB, **copy the ISO's files**,
+and make it boot — leaving a normal, writable FAT32 filesystem. Use it for Windows
+ISOs or when you want to add/remove files on the stick. Linux backend only:
+
+```bash
+iso2drive copy-usb ubuntu-24.04.iso /dev/sdb --commit          # FAT32, bootable
+iso2drive copy-usb win11.iso /dev/sdb --fs ntfs --commit       # NTFS (BIOS/large WIM)
+```
+
+- MBR + a single active partition; `--fs fat32` (default, UEFI + BIOS), `exfat`/`ntfs`
+  (data / large files, not UEFI-bootable — UEFI firmware only reads FAT).
+- **UEFI** boots via the ISO's copied `/EFI/BOOT/BOOTX64.EFI` (present in most ISOs).
+- **BIOS**: isolinux-based Linux ISOs are converted to `syslinux` and given MBR boot
+  code; Windows ISOs BIOS-boot via their own `bootmgr` (active partition).
+- Best-effort: `syslinux` must match the ISO's isolinux version, and ISOs that hide
+  their EFI loader in an el-torito `efi.img` (not loose files) need the raw path.
+
+Needs `parted`, `dosfstools`/`exfatprogs`/`ntfs-3g`, `syslinux`, and `bsdtar`.
 
 ## What's real vs stubbed
 
@@ -182,9 +200,10 @@ on both backends** — Linux (`grub-install` x2) and Windows (ESP + `bcdedit`
 orchestration, gated on the bundled GRUB binaries above); **bootable-USB raw flash**
 on both backends (`list-disks` + `write-usb`, with progress bar, read-back verify,
 and system-disk / non-removable guards); **persistence** (Linux: labelled ext4
-writable image for Ubuntu/casper + Debian live, with the `(persistent)` entry).
+writable image for Ubuntu/casper + Debian live, with the `(persistent)` entry);
+**file-copy USB** (Linux: partition + format + copy files + syslinux/EFI boot).
 
-**Not yet implemented:** the file-copy + syslinux USB path (see roadmap).
+**Not yet implemented:** file-copy USB on Windows (needs the diskpart/bootsect path).
 
 ## Per-distro boot logic
 
@@ -197,10 +216,18 @@ openSUSE) only boot ISOs that ship one.
 
 ## Roadmap
 
-1. **File-copy USB path** — a FAT32/exFAT file-copy + syslinux/EFI variant of
-   `write-usb`, for Windows ISOs and >4 GB payloads (raw `dd` covers isohybrid today).
-2. **Windows polish** — bundle/auto-fetch the GRUB binaries; add a Secure Boot
-   signed-shim path so `--commit` works without disabling Secure Boot.
-3. **Persistence polish** — `writable`-label support for newest Ubuntu; dedicated
+1. **Windows polish** — bundle/auto-fetch the GRUB binaries; add a Secure Boot
+   signed-shim path so `--commit` works without disabling Secure Boot; a Windows
+   file-copy USB path (diskpart + format + bootsect).
+2. **Persistence polish** — `writable`-label support for newest Ubuntu; dedicated
    persistence partition option; Windows persistence via an ext4 image library.
+3. **WIM handling** — split `install.wim` > 4 GB so Windows ISOs fit a FAT32 UEFI
+   USB via `copy-usb`.
 4. Validate/extend the profile table against real images; multi-ISO menu polish.
+
+## Testing status
+
+The read-only and dry-run paths are verified on the dev box (see git history).
+Every **`--commit`** path — `grub-install`, raw USB write, disk partitioning,
+persistence, and file-copy USB — has been compiled and dry-run-checked but not yet
+run end-to-end on real Linux hardware. That's the main outstanding validation.

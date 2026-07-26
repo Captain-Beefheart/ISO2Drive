@@ -398,6 +398,122 @@ static int lin_write_usb(const char *iso, const char *device,
     return rc;
 }
 
+static const char *syslinux_mbr_bin(void) {
+    static const char *cands[] = {
+        "/usr/lib/syslinux/mbr/mbr.bin",
+        "/usr/lib/syslinux/mbr.bin",
+        "/usr/share/syslinux/mbr.bin",
+        NULL
+    };
+    for (int i = 0; cands[i]; ++i)
+        if (file_exists(cands[i])) return cands[i];
+    return NULL;
+}
+
+/* File-copy (Rufus "ISO mode"): partition + format + copy the ISO's files, then
+ * make it boot. UEFI relies on the ISO's copied EFI/BOOT bootloader; BIOS uses
+ * syslinux for isolinux-based Linux ISOs (Windows ISOs BIOS-boot via bootmgr). */
+static int lin_copy_usb(const char *iso, const char *device, const char *fs,
+                        bool commit, bool force) {
+    if (!fs) fs = "fat32";
+    int is_fat   = (strcmp(fs, "fat32") == 0);
+    int is_exfat = (strcmp(fs, "exfat") == 0);
+
+    if (disk_is_root_disk(device)) {
+        log_err("refusing: %s is the running system disk", device);
+        return -1;
+    }
+    int rem = disk_is_removable(device);
+    log_info("target: %s  fs=%s  removable=%s", device, fs, rem == 1 ? "yes" : rem == 0 ? "no" : "?");
+    if (!is_fat) log_warn("fs=%s is not UEFI-bootable (UEFI needs FAT); use it for data / large files", fs);
+
+    if (commit) {
+        if (rem == 0 && !force) { log_err("%s is not removable; pass --force to override", device); return -1; }
+        const char *mkfs = is_fat ? "mkfs.vfat" : is_exfat ? "mkfs.exfat" : "mkfs.ntfs";
+        const char *need[] = { "parted", "partprobe", mkfs, "bsdtar", NULL };
+        for (int i = 0; need[i]; ++i)
+            if (!have_cmd(need[i])) { log_err("missing tool: %s (need parted, dosfstools, libarchive)", need[i]); return -1; }
+    } else if (rem == 0) {
+        log_warn("%s is NOT removable; --commit will need --force", device);
+    }
+
+    char *qdisk = sh_quote(device);
+    char *p1 = part_dev(device, 1);
+    char *qp1 = p1 ? sh_quote(p1) : NULL;
+    char *qiso = sh_quote(iso);
+    const char *mnt = "/run/iso2drive/usb";
+    if (!qdisk || !qp1 || !qiso) { free(qdisk); free(p1); free(qp1); free(qiso); return -1; }
+
+    int fail = 0;
+    log_warn("FILE-COPY: this ERASES all data on %s", device);
+
+    const char *pt = is_exfat ? "fat32" : is_fat ? "fat32" : "ntfs"; /* parted fs-type hint */
+    char *setup[] = {
+        str_format("wipefs -a %s", qdisk),
+        str_format("parted -s %s mklabel msdos", qdisk),
+        str_format("parted -s %s mkpart primary %s 1MiB 100%%", qdisk, pt),
+        str_format("parted -s %s set 1 boot on", qdisk),
+        str_format("partprobe %s ; udevadm settle", qdisk),
+        is_fat   ? str_format("mkfs.vfat -F32 -n ISO2DRIVE %s", qp1)
+        : is_exfat ? str_format("mkfs.exfat -n ISO2DRIVE %s", qp1)
+                   : str_format("mkfs.ntfs -Q -L ISO2DRIVE %s", qp1),
+        str_format("mkdir -p %s", mnt),
+        str_format("mount %s %s", qp1, mnt),
+        str_format("bsdtar -C %s -xf %s", mnt, qiso),
+    };
+    for (size_t i = 0; i < sizeof setup / sizeof setup[0]; ++i) {
+        if (setup[i]) { fail |= (run_step(commit, setup[i]) != 0); free(setup[i]); } else fail = 1;
+    }
+
+    if (commit && !fail) {
+        char *win    = str_format("%s/sources/install.wim", mnt);
+        char *isocfg = str_format("%s/isolinux/isolinux.cfg", mnt);
+        char *efi    = str_format("%s/EFI/BOOT/BOOTX64.EFI", mnt);
+        char *efi2   = str_format("%s/efi/boot/bootx64.efi", mnt);
+
+        if (win && file_exists(win)) {
+            log_info("Windows ISO: BIOS boots via bootmgr (active partition set); UEFI via /efi/boot");
+            if (is_fat) log_warn("install.wim can exceed FAT32's 4GB limit; if the copy failed, use --fs ntfs (BIOS only) or split the WIM");
+        } else if (isocfg && file_exists(isocfg) && is_fat) {
+            const char *mbrbin = syslinux_mbr_bin();
+            log_info("isolinux-based ISO: converting to syslinux for BIOS boot");
+            char *boot[] = {
+                str_format("mv %s/isolinux %s/syslinux", mnt, mnt),
+                str_format("mv %s/syslinux/isolinux.cfg %s/syslinux/syslinux.cfg", mnt, mnt),
+                str_format("umount %s", mnt),
+                str_format("syslinux --install %s", qp1),
+            };
+            for (size_t i = 0; i < sizeof boot / sizeof boot[0]; ++i) {
+                if (boot[i]) { fail |= (run_step(commit, boot[i]) != 0); free(boot[i]); } else fail = 1;
+            }
+            if (mbrbin) {
+                char *c = str_format("dd bs=440 count=1 conv=notrunc if=%s of=%s", mbrbin, qdisk);
+                if (c) { fail |= (run_step(commit, c) != 0); free(c); }
+            } else {
+                log_warn("syslinux mbr.bin not found; BIOS MBR boot code not written (UEFI still works)");
+            }
+        } else {
+            log_info("no isolinux/Windows boot files; UEFI-only (via /EFI/BOOT)");
+        }
+
+        if ((efi && file_exists(efi)) || (efi2 && file_exists(efi2)))
+            log_info("UEFI-bootable: /EFI/BOOT bootloader present");
+        else
+            log_warn("no loose /EFI/BOOT/BOOTX64.EFI; UEFI may need the raw dd path (efi.img in el-torito)");
+
+        free(win); free(isocfg); free(efi); free(efi2);
+    } else if (!commit) {
+        log_info("(dry-run) then: Windows -> bootmgr; isolinux -> syslinux + MBR; UEFI via /EFI/BOOT");
+    }
+
+    char *fin = str_format("umount %s 2>/dev/null ; sync", mnt);
+    if (fin) { run_step(commit, fin); free(fin); }
+
+    free(qdisk); free(p1); free(qp1); free(qiso);
+    if (!fail && commit) log_info("file-copy USB ready on %s", device);
+    return fail ? -1 : 0;
+}
+
 static int lin_list_disks(void) {
     char *o = run_capture("lsblk -d -o NAME,SIZE,TYPE,TRAN,HOTPLUG,MODEL 2>/dev/null");
     if (o && *o) { fputs(o, stdout); free(o); }
@@ -426,6 +542,7 @@ static const frugal_backend_t g_backend = {
     .install_grub       = lin_install_grub,
     .probe_env          = lin_probe_env,
     .write_usb          = lin_write_usb,
+    .copy_usb           = lin_copy_usb,
     .list_disks         = lin_list_disks,
 };
 const frugal_backend_t *backend_get(void) { return &g_backend; }

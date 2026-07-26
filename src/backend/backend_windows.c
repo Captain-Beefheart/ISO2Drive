@@ -280,6 +280,14 @@ static int win_write_usb(const char *iso, const char *device,
     return rc;
 }
 
+static int win_copy_usb(const char *iso, const char *device, const char *fs,
+                        bool commit, bool force) {
+    (void)iso; (void)device; (void)fs; (void)commit; (void)force;
+    log_err("file-copy USB is not yet implemented on Windows");
+    log_err("use raw flash (write-usb) for isohybrid Linux ISOs, or the Linux/AppImage backend");
+    return -1;
+}
+
 static int win_list_disks(void) {
     winusb_list();
     return 0;
@@ -318,6 +326,7 @@ static const frugal_backend_t g_backend = {
     .install_grub       = win_install_grub,
     .probe_env          = win_probe_env,
     .write_usb          = win_write_usb,
+    .copy_usb           = win_copy_usb,
     .list_disks         = win_list_disks,
 };
 const frugal_backend_t *backend_get(void) { return &g_backend; }

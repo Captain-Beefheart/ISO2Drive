@@ -55,6 +55,10 @@ typedef struct frugal_backend {
     /* --- bootable USB (raw / dd-style flash of the ISO onto a whole device) --- */
     int (*write_usb)(const char *iso, const char *device,
                      bool commit, bool verify, bool force);
+    /* File-copy USB (Rufus "ISO mode"): partition + format (fs = fat32/exfat/ntfs)
+     * + copy the ISO's files + make it boot. Linux only. */
+    int (*copy_usb)(const char *iso, const char *device, const char *fs,
+                    bool commit, bool force);
     int (*list_disks)(void);   /* print candidate target devices */
 } frugal_backend_t;
 
