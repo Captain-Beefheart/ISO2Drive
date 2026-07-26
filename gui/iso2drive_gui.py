@@ -138,12 +138,13 @@ class App(tk.Tk):
 
         self.title("ISO2Drive")
         self.configure(bg=BG)
-        self.geometry("760x660")
-        self.minsize(680, 600)
+        self.geometry("820x780")
+        self.minsize(720, 680)
 
         self._build_header()
+        self._build_statusbar()          # reserve the bottom BEFORE the expanding body
         body = tk.Frame(self, bg=BG)
-        body.pack(fill="both", expand=True, padx=18, pady=(4, 14))
+        body.pack(fill="both", expand=True, padx=18, pady=(4, 8))
         self._build_image(body)
         self._build_drive(body)
         self._build_mode(body)
@@ -151,7 +152,6 @@ class App(tk.Tk):
         self._build_actions(body)
         self._build_progress(body)
         self._build_log(body)
-        self._build_statusbar()
 
         self.refresh_drives()
         self.on_mode_change()
@@ -164,7 +164,7 @@ class App(tk.Tk):
 
     def _build_header(self):
         h = tk.Frame(self, bg=BG)
-        h.pack(fill="x", padx=18, pady=(14, 6))
+        h.pack(fill="x", padx=18, pady=(10, 2))
         tk.Label(h, text="ISO2Drive", bg=BG, fg=TEAL,
                  font=("Segoe UI", 18, "bold")).pack(side="left")
         tk.Label(h, text="  flash an ISO to a drive, boot it anywhere",
@@ -176,9 +176,9 @@ class App(tk.Tk):
 
     def _card(self, parent, title):
         f = tk.Frame(parent, bg=PANEL, highlightbackground="#2A2E31", highlightthickness=1)
-        f.pack(fill="x", pady=6)
+        f.pack(fill="x", pady=2)
         inner = tk.Frame(f, bg=PANEL)
-        inner.pack(fill="x", padx=12, pady=10)
+        inner.pack(fill="x", padx=12, pady=4)
         tk.Label(inner, text=title, bg=PANEL, fg=DIM,
                  font=("Segoe UI", 9, "bold")).pack(anchor="w")
         return inner
@@ -249,18 +249,18 @@ class App(tk.Tk):
 
     def _build_actions(self, parent):
         row = tk.Frame(parent, bg=BG); row.pack(fill="x", pady=(10, 4))
+        self.btn_flash = tk.Button(row, text="⚡  Flash", command=self.flash, bg=TEAL, fg="#0B1416",
+                                   activebackground="#3FE0F2", relief="flat", padx=24, pady=7,
+                                   font=("Segoe UI", 11, "bold"))
         self.btn_plan = tk.Button(row, text="Show plan  (dry-run)", command=self.show_plan,
                                   bg="#2A2E31", fg=FG, activebackground="#3A3F43",
-                                  relief="flat", padx=14, pady=6, font=("Segoe UI", 10))
-        self.btn_plan.pack(side="left")
-        self.btn_flash = tk.Button(row, text="⚡ Flash", command=self.flash, bg=TEAL, fg="#0B1416",
-                                   activebackground="#3FE0F2", relief="flat", padx=22, pady=6,
-                                   font=("Segoe UI", 11, "bold"))
-        self.btn_flash.pack(side="right")
+                                  relief="flat", padx=14, pady=7, font=("Segoe UI", 10))
         self.btn_cancel = tk.Button(row, text="Cancel", command=self.cancel, bg="#3A2A2A", fg=FG,
-                                    activebackground="#4A3535", relief="flat", padx=14, pady=6,
+                                    activebackground="#4A3535", relief="flat", padx=14, pady=7,
                                     state="disabled")
-        self.btn_cancel.pack(side="right", padx=(0, 8))
+        self.btn_flash.pack(side="left")
+        self.btn_plan.pack(side="left", padx=10)
+        self.btn_cancel.pack(side="left")
 
     def _build_progress(self, parent):
         from tkinter import ttk
@@ -278,7 +278,7 @@ class App(tk.Tk):
     def _build_log(self, parent):
         wrap = tk.Frame(parent, bg=BG); wrap.pack(fill="both", expand=True)
         self.log = tk.Text(wrap, bg="#0F1112", fg=FG, insertbackground=FG, relief="flat",
-                           font=("Consolas", 9), height=10, wrap="word")
+                           font=("Consolas", 9), height=5, width=10, wrap="word")
         sb = tk.Scrollbar(wrap, command=self.log.yview)
         self.log.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
