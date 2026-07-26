@@ -1,0 +1,58 @@
+name: AppImage
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the AppImage to"
+        default: v0.1.0
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential wget file
+
+      - name: Build iso2drive (Linux backend)
+        run: make
+
+      - name: Assemble AppDir
+        run: |
+          set -eux
+          mkdir -p AppDir/usr/bin
+          cp iso2drive              AppDir/usr/bin/iso2drive
+          cp packaging/AppRun       AppDir/AppRun
+          cp packaging/iso2drive.desktop AppDir/iso2drive.desktop
+          cp packaging/iso2drive.png     AppDir/iso2drive.png
+          chmod +x AppDir/AppRun AppDir/usr/bin/iso2drive
+
+      - name: Fetch appimagetool
+        run: |
+          wget -qO appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+      - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          ARCH: x86_64
+        run: ./appimagetool AppDir ISO2Drive-0.1.0-x86_64.AppImage
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: gh release upload "$TAG" ISO2Drive-0.1.0-x86_64.AppImage --clobber
+
+      - name: Also keep as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ISO2Drive-AppImage
+          path: ISO2Drive-0.1.0-x86_64.AppImage

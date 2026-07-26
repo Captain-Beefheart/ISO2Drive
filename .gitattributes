@@ -1,7 +1,10 @@
 # Normalize to LF in the repo. This project builds with MinGW/gcc (fine with LF)
 # and its shell scripts + GRUB configs MUST be LF to work on the Linux target.
 * text=auto eol=lf
-*.sh   text eol=lf
-*.cfg  text eol=lf
-*.c    text eol=lf
-*.h    text eol=lf
+*.sh      text eol=lf
+*.cfg     text eol=lf
+*.c       text eol=lf
+*.h       text eol=lf
+*.desktop text eol=lf
+AppRun    text eol=lf
+*.png     binary

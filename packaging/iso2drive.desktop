@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ISO2Drive
+Comment=Flash an ISO to a drive, boot it anywhere
+Exec=iso2drive
+Icon=iso2drive
+Categories=Utility;System;
+Terminal=true
