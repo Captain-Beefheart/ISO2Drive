@@ -59,6 +59,8 @@ the host backend from `$(OS)`.
 
 A small Etcher-style desktop front-end (Python + tkinter) that drives the same CLI:
 
+![The ISO2Drive GUI](docs/screenshot.png)
+
 ```bash
 python gui/iso2drive_gui.py
 ```

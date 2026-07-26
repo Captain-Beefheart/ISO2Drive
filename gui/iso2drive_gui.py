@@ -9,6 +9,7 @@ work, safety guards, and both backends live in the CLI.
 import os
 import re
 import sys
+import glob
 import shutil
 import threading
 import queue
@@ -39,16 +40,16 @@ MODES = [
 
 
 def find_binary():
-    names = (["iso2drive.exe", "iso2drive-0.1.0-windows-x64.exe"]
-             if os.name == "nt" else
-             ["iso2drive", "ISO2Drive-0.1.0-x86_64.AppImage"])
+    # exact names first, then any versioned release binary (highest name wins)
+    pats = (["iso2drive.exe", "iso2drive-*.exe"] if os.name == "nt"
+            else ["iso2drive", "iso2drive-*", "ISO2Drive-*.AppImage"])
     here = os.path.dirname(os.path.abspath(__file__))
     for d in (here, os.path.dirname(here), os.getcwd()):
-        for n in names:
-            p = os.path.join(d, n)
-            if os.path.isfile(p):
-                return p
-    for n in names:
+        for pat in pats:
+            for p in sorted(glob.glob(os.path.join(d, pat)), reverse=True):
+                if os.path.isfile(p):
+                    return p
+    for n in (["iso2drive.exe", "iso2drive"] if os.name == "nt" else ["iso2drive"]):
         w = shutil.which(n)
         if w:
             return w
