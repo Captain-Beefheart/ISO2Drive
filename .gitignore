@@ -1,0 +1,5 @@
+*.o
+/iso2drive
+/iso2drive.exe
+/iso2drive_lin.exe
+/out/
