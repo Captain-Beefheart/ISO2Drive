@@ -26,6 +26,13 @@ typedef struct {
     const char *kernel;
     const char *initrd;
     const char *cmdline_fmt;
+
+    /* Persistence for frugal live sessions. persist_param == NULL means the
+     * family is unsupported. The writable store is an ext4 image labelled
+     * persist_label; Debian additionally needs a persistence.conf ("/ union"). */
+    const char *persist_param;  /* kernel arg: "persistent" / "persistence" */
+    const char *persist_label;  /* image fs label: "casper-rw" / "persistence" */
+    bool        persist_conf;   /* image needs persistence.conf (Debian) */
 } distro_profile_t;
 
 /* Callback the detector uses to probe the ISO. `path` has a leading '/'. */

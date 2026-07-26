@@ -89,6 +89,22 @@ mounted partitions, print the target's current layout before touching it, and ne
 `partprobe` (parted). `add --esp` alone (no partitioning) still works if you've
 prepared the partitions yourself.
 
+### Persistence (Linux)
+
+Add a writable overlay so a frugally-booted live session remembers changes across
+reboots. Linux backend only (it needs `mkfs.ext4`), for Ubuntu/casper and Debian live:
+
+```bash
+iso2drive provision /dev/sdb ubuntu-24.04.iso --persist 4G --commit
+iso2drive add /mnt/data/iso2drive debian-12.iso --persist 2G --commit
+```
+
+This creates an ext4 image labelled `casper-rw` (Ubuntu) or `persistence` (Debian —
+with a `/ union` persistence.conf) at the root of the store partition, and generates
+a direct-boot **`(persistent)`** entry carrying the right kernel arg (`persistent` /
+`persistence`). Other families, and the Windows backend, don't support persistence
+(no ext4 tooling); `--persist` is ignored there with a warning.
+
 ### Flash boot code — Windows (brownfield dual-boot)
 
 Preview from any prompt, then apply from an **elevated** prompt:
@@ -165,10 +181,10 @@ store/marker layout; ISO copy; **greenfield disk partitioning** (Linux: `sgdisk`
 on both backends** — Linux (`grub-install` x2) and Windows (ESP + `bcdedit`
 orchestration, gated on the bundled GRUB binaries above); **bootable-USB raw flash**
 on both backends (`list-disks` + `write-usb`, with progress bar, read-back verify,
-and system-disk / non-removable guards).
+and system-disk / non-removable guards); **persistence** (Linux: labelled ext4
+writable image for Ubuntu/casper + Debian live, with the `(persistent)` entry).
 
-**Not yet implemented:** persistence, and the file-copy + syslinux USB path
-(see roadmap).
+**Not yet implemented:** the file-copy + syslinux USB path (see roadmap).
 
 ## Per-distro boot logic
 
@@ -181,10 +197,10 @@ openSUSE) only boot ISOs that ship one.
 
 ## Roadmap
 
-1. **Persistence** — casper-rw / Debian `persistence`, using the leftover data-partition
-   space (grow it / add a persistence file at provision time).
-2. **File-copy USB path** — a FAT32/exFAT file-copy + syslinux/EFI variant of
+1. **File-copy USB path** — a FAT32/exFAT file-copy + syslinux/EFI variant of
    `write-usb`, for Windows ISOs and >4 GB payloads (raw `dd` covers isohybrid today).
-3. **Windows polish** — bundle/auto-fetch the GRUB binaries; add a Secure Boot
+2. **Windows polish** — bundle/auto-fetch the GRUB binaries; add a Secure Boot
    signed-shim path so `--commit` works without disabling Secure Boot.
+3. **Persistence polish** — `writable`-label support for newest Ubuntu; dedicated
+   persistence partition option; Windows persistence via an ext4 image library.
 4. Validate/extend the profile table against real images; multi-ISO menu polish.

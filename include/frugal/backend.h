@@ -41,6 +41,13 @@ typedef struct frugal_backend {
     int (*partition_disk)(const char *disk, bool commit,
                           char **out_esp_dir, char **out_store_root);
 
+    /* --- persistence (frugal live sessions; Linux only) --- */
+    /* Create an ext4 writable image labelled `label` (size like "4G") at the
+     * root of the store partition `data_mount`; write persistence.conf when
+     * need_conf. Honors commit. */
+    int (*create_persistence)(const char *data_mount, const char *label,
+                              bool need_conf, const char *size, bool commit);
+
     /* --- boot install --- */
     int (*install_grub)(const frugal_target_t *tgt, const char *store_root);
     int (*probe_env)(void);

@@ -57,10 +57,12 @@ static int cmd_provision(const frugal_backend_t *b, int argc, char **argv) {
     const char *disk = argv[2];
     const char *iso  = argv[3];
     bool commit = false, do_uefi = true, do_bios = true;
+    const char *persist_size = NULL;
     for (int i = 4; i < argc; ++i) {
         if      (!strcmp(argv[i], "--commit"))  commit = true;
         else if (!strcmp(argv[i], "--no-uefi")) do_uefi = false;
         else if (!strcmp(argv[i], "--no-bios")) do_bios = false;
+        else if (!strcmp(argv[i], "--persist") && i + 1 < argc) persist_size = argv[++i];
         else log_warn("ignoring unknown option: %s", argv[i]);
     }
 
@@ -89,12 +91,23 @@ static int cmd_provision(const frugal_backend_t *b, int argc, char **argv) {
     if (b->copy_iso(iso, store, &grub_path) != 0 || !grub_path) {
         log_err("copy_iso failed"); free(esp); free(store); return 1;
     }
+    bool do_persist = false;
+    if (persist_size) {
+        if (p && p->persist_param) {
+            char *dm = path_parent(store);
+            do_persist = dm && b->create_persistence(dm, p->persist_label, p->persist_conf, persist_size, true) == 0;
+            free(dm);
+        } else {
+            log_warn("persistence not supported for this distro family; ignoring --persist");
+        }
+    }
+
     char *base    = path_basename_noext(iso);
     char *slug    = str_slugify(base);
     char *title   = xstrdup(base ? base : "linux");
     char *entries = str_format("%s/entries.d", store);
-    if (slug && title && entries && grubcfg_write_entry(entries, slug, title, grub_path, p) == 0)
-        log_info("  entry: entries.d/%s.cfg", slug);
+    if (slug && title && entries && grubcfg_write_entry(entries, slug, title, grub_path, p, do_persist) == 0)
+        log_info("  entry: entries.d/%s.cfg%s", slug, do_persist ? " (persistent)" : "");
 
     /* (3) FLASH */
     ui_step(3, 1, "FLASH", "installing boot code");
@@ -137,11 +150,13 @@ static int cmd_add(const frugal_backend_t *b, int argc, char **argv) {
     frugal_target_t tgt = {0};
     tgt.do_uefi = true;
     bool flash = false;
+    const char *persist_size = NULL;
     for (int i = 4; i < argc; ++i) {
         if      (!strcmp(argv[i], "--esp")      && i + 1 < argc) { tgt.esp_dir    = argv[++i]; flash = true; }
         else if (!strcmp(argv[i], "--disk")     && i + 1 < argc) { tgt.disk       = argv[++i]; tgt.do_bios = true; }
         else if (!strcmp(argv[i], "--boot-dir") && i + 1 < argc) { tgt.boot_dir   = argv[++i]; }
         else if (!strcmp(argv[i], "--assets")   && i + 1 < argc) { tgt.assets_dir = argv[++i]; }
+        else if (!strcmp(argv[i], "--persist")  && i + 1 < argc) { persist_size   = argv[++i]; }
         else if (!strcmp(argv[i], "--flash"))   { flash = true; }
         else if (!strcmp(argv[i], "--commit"))  { tgt.commit = true; }
         else if (!strcmp(argv[i], "--no-uefi")) { tgt.do_uefi = false; }
@@ -169,6 +184,19 @@ static int cmd_add(const frugal_backend_t *b, int argc, char **argv) {
         return 1;
     }
 
+    bool do_persist = false;
+    if (persist_size) {
+        if (p && p->persist_param) {
+            char *dm = path_parent(store);
+            int prc = dm ? b->create_persistence(dm, p->persist_label, p->persist_conf, persist_size, tgt.commit) : -1;
+            do_persist = (prc == 0);
+            if (prc != 0) log_warn("persistence not created; entry will be non-persistent");
+            free(dm);
+        } else {
+            log_warn("persistence not supported for this distro family; ignoring --persist");
+        }
+    }
+
     char *base    = path_basename_noext(iso);
     char *slug    = str_slugify(base);
     char *title   = xstrdup(base ? base : "linux");
@@ -176,8 +204,8 @@ static int cmd_add(const frugal_backend_t *b, int argc, char **argv) {
 
     int rc = 1;
     if (slug && title && entries) {
-        rc = grubcfg_write_entry(entries, slug, title, grub_path, p);
-        if (rc == 0) log_info("  entry: entries.d/%s.cfg", slug);
+        rc = grubcfg_write_entry(entries, slug, title, grub_path, p, do_persist);
+        if (rc == 0) log_info("  entry: entries.d/%s.cfg%s", slug, do_persist ? " (persistent)" : "");
     }
 
     /* keep a reference master in the store; install_grub places the real one */
@@ -218,6 +246,7 @@ static void usage(void) {
         "    --disk <dev>     whole disk for BIOS boot code, e.g. /dev/sdb\n"
         "    --assets <dir>   Windows: bundled GRUB binaries (default: assets/grub)\n"
         "    --boot-dir <d>   GRUB boot dir (default: the ESP)\n"
+        "    --persist <size> Linux: add a writable persistence store, e.g. 4G (Ubuntu/Debian)\n"
         "    --no-uefi / --no-bios\n"
         "\n"
         "  <store-dir> is the tool's 'iso2drive' dir on the target partition,\n"

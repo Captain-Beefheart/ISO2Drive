@@ -203,6 +203,46 @@ static int lin_partition_disk(const char *disk, bool commit,
     return fail ? -1 : 0;
 }
 
+/* ---- persistence ---- */
+
+/* Create an ext4 writable image at <data_mount>/<label>, labelled `label`, of
+ * `size` (e.g. "4G"); Debian also needs a persistence.conf with "/ union". */
+static int lin_create_persistence(const char *data_mount, const char *label,
+                                  bool need_conf, const char *size, bool commit) {
+    if (!data_mount || !label || !size) { log_err("create_persistence: bad args"); return -1; }
+    if (commit && (!have_cmd("mkfs.ext4") || !have_cmd("fallocate"))) {
+        log_err("persistence needs mkfs.ext4 (e2fsprogs) and fallocate (util-linux)");
+        return -1;
+    }
+    char *file  = str_format("%s/%s", data_mount, label);
+    char *qfile = file ? sh_quote(file) : NULL;
+    if (!file || !qfile) { free(file); free(qfile); return -1; }
+
+    int fail = 0;
+    log_info("persistence image: %s  (%s, label=%s)", file, size, label);
+    char *c1 = str_format("fallocate -l %s %s", size, qfile);
+    if (c1) { fail |= (run_step(commit, c1) != 0); free(c1); }
+    char *c2 = str_format("mkfs.ext4 -F -L %s %s", label, qfile);
+    if (c2) { fail |= (run_step(commit, c2) != 0); free(c2); }
+
+    if (need_conf) {
+        const char *mnt = "/run/iso2drive/persist";
+        char *cs[] = {
+            str_format("mkdir -p %s", mnt),
+            str_format("mount -o loop %s %s", qfile, mnt),
+            str_format("echo '/ union' > %s/persistence.conf", mnt),
+            str_format("umount %s", mnt),
+        };
+        for (size_t i = 0; i < sizeof cs / sizeof cs[0]; ++i) {
+            if (cs[i]) { fail |= (run_step(commit, cs[i]) != 0); free(cs[i]); } else fail = 1;
+        }
+    }
+
+    free(file); free(qfile);
+    if (!fail && commit) log_info("persistence store ready");
+    return fail ? -1 : 0;
+}
+
 /* ---- boot install ---- */
 
 /* Real GRUB install: UEFI (removable, no NVRAM) and/or BIOS (core.img on disk),
@@ -381,10 +421,11 @@ static const frugal_backend_t g_backend = {
     .iso_close      = lin_iso_close,
     .prepare_store  = lin_prepare_store,
     .copy_iso       = lin_copy_iso,
-    .partition_disk = lin_partition_disk,
-    .install_grub   = lin_install_grub,
-    .probe_env      = lin_probe_env,
-    .write_usb      = lin_write_usb,
-    .list_disks     = lin_list_disks,
+    .partition_disk     = lin_partition_disk,
+    .create_persistence = lin_create_persistence,
+    .install_grub       = lin_install_grub,
+    .probe_env          = lin_probe_env,
+    .write_usb          = lin_write_usb,
+    .list_disks         = lin_list_disks,
 };
 const frugal_backend_t *backend_get(void) { return &g_backend; }

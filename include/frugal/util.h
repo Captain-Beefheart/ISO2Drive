@@ -17,6 +17,7 @@ char *str_slugify(const char *s);       /* -> lowercase [a-z0-9-] */
 /* --- paths / files --- */
 char *path_basename(const char *path);       /* last component, caller frees */
 char *path_basename_noext(const char *path); /* last component, extension dropped */
+char *path_parent(const char *path);         /* directory part; "." if none */
 int   ensure_dir(const char *path);          /* best-effort mkdir (single level) */
 int   write_file(const char *path, const char *content);
 int   copy_file(const char *src, const char *dst);

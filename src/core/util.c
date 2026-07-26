@@ -77,6 +77,18 @@ char *path_basename_noext(const char *path) {
     return b;
 }
 
+char *path_parent(const char *path) {
+    const char *last = NULL;
+    for (const char *p = path; *p; ++p)
+        if (*p == '/' || *p == '\\') last = p;
+    if (!last) return xstrdup(".");
+    if (last == path) return xstrdup("/");
+    size_t n = (size_t)(last - path);
+    char *r = malloc(n + 1);
+    if (r) { memcpy(r, path, n); r[n] = '\0'; }
+    return r;
+}
+
 int ensure_dir(const char *path) {
     MKDIR(path); /* best-effort: ignore EEXIST and the like in the scaffold */
     return 0;

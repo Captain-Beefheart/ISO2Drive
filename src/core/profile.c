@@ -9,29 +9,34 @@ static const char *det_arch[]   = { "/arch/boot/x86_64/vmlinuz-linux", NULL };
 static const char *det_suse[]   = { "/boot/x86_64/loader/linux", NULL };
 
 /*
- * NOTE: this table is a STARTING POINT. Validate every path and cmdline against
- * real ISOs before trusting them -- GLIM (GRUB2 Live ISO Multiboot) is the
- * authoritative per-distro reference. Families with kernel == NULL are only
- * bootable via an embedded /boot/grub/loopback.cfg (their live boot needs
- * parameters too awkward to hand-craft, e.g. Arch's img_dev/img_loop pair).
+ * NOTE: this table is a STARTING POINT. Validate the paths/cmdlines/persistence
+ * details against real ISOs -- GLIM (GRUB2 Live ISO Multiboot) is the
+ * authoritative per-distro reference. Families with kernel == NULL only boot
+ * ISOs that ship their own /boot/grub/loopback.cfg, and persist_param == NULL
+ * marks families without frugal persistence support here.
  */
 static const distro_profile_t g_profiles[] = {
     { DISTRO_CASPER, "Ubuntu / casper-based", "ubuntu", det_casper,
       "/casper/vmlinuz", "/casper/initrd",
-      "boot=casper iso-scan/filename=%s quiet splash ---" },
+      "boot=casper iso-scan/filename=%s quiet splash ---",
+      "persistent", "casper-rw", false },
 
     { DISTRO_DEBIAN, "Debian live", "debian", det_debian,
       "/live/vmlinuz", "/live/initrd.img",
-      "boot=live findiso=%s components quiet splash" },
+      "boot=live findiso=%s components quiet splash",
+      "persistence", "persistence", true },
 
     { DISTRO_FEDORA, "Fedora / dracut live", "fedora", det_fedora,
-      NULL, NULL, NULL }, /* needs embedded loopback.cfg */
+      NULL, NULL, NULL,           /* needs embedded loopback.cfg */
+      NULL, NULL, false },
 
     { DISTRO_ARCH,   "Arch (archiso)", "arch", det_arch,
-      NULL, NULL, NULL }, /* img_dev/img_loop -> use loopback.cfg */
+      NULL, NULL, NULL,           /* img_dev/img_loop -> use loopback.cfg */
+      NULL, NULL, false },
 
     { DISTRO_SUSE,   "openSUSE live", "suse", det_suse,
-      NULL, NULL, NULL },
+      NULL, NULL, NULL,
+      NULL, NULL, false },
 };
 static const size_t g_nprofiles = sizeof g_profiles / sizeof g_profiles[0];
 

@@ -44,38 +44,59 @@ int grubcfg_write_master(const char *out_path) {
 }
 
 int grubcfg_write_entry(const char *entries_dir, const char *slug, const char *title,
-                        const char *iso_grub_path, const distro_profile_t *prof) {
-    char *fallback;
-    if (prof && prof->kernel && prof->initrd && prof->cmdline_fmt) {
-        char *cmd = str_format(prof->cmdline_fmt, iso_grub_path);
-        if (!cmd) return -1;
-        fallback = str_format(
-            "        linux  (loop)%s %s\n"
-            "        initrd (loop)%s\n",
-            prof->kernel, cmd, prof->initrd);
-        free(cmd);
-    } else {
-        fallback = xstrdup(
-            "        echo \"This ISO has no embedded loopback.cfg; cannot boot it generically.\"\n"
-            "        sleep 5\n");
-    }
-    if (!fallback) return -1;
-
+                        const char *iso_grub_path, const distro_profile_t *prof,
+                        bool persist) {
     const char *cls = (prof && prof->grub_class) ? prof->grub_class : "linux";
-    char *entry = str_format(
-        "menuentry \"%s\" --class %s {\n"
-        "    search --no-floppy --set=root --file /iso2drive/.iso2drive-store\n"
-        "    set iso=\"%s\"\n"
-        "    loopback loop \"$iso\"\n"
-        "    if [ -e (loop)/boot/grub/loopback.cfg ]; then\n"
-        "        export iso ; set root=(loop)\n"
-        "        configfile (loop)/boot/grub/loopback.cfg\n"
-        "    else\n"
-        "%s"
-        "    fi\n"
-        "}\n",
-        title, cls, iso_grub_path, fallback);
-    free(fallback);
+    char *entry = NULL;
+
+    if (persist && prof && prof->persist_param && prof->kernel && prof->initrd && prof->cmdline_fmt) {
+        /* Persistence needs our kernel arg, so boot directly (not via the ISO's
+         * loopback.cfg, which we cannot pass parameters to). */
+        char *cmd = str_format(prof->cmdline_fmt, iso_grub_path);
+        char *pcmd = cmd ? str_format("%s %s", cmd, prof->persist_param) : NULL;
+        free(cmd);
+        if (!pcmd) return -1;
+        entry = str_format(
+            "menuentry \"%s (persistent)\" --class %s {\n"
+            "    search --no-floppy --set=root --file /iso2drive/.iso2drive-store\n"
+            "    set iso=\"%s\"\n"
+            "    loopback loop \"$iso\"\n"
+            "    linux  (loop)%s %s\n"
+            "    initrd (loop)%s\n"
+            "}\n",
+            title, cls, iso_grub_path, prof->kernel, pcmd, prof->initrd);
+        free(pcmd);
+    } else {
+        char *fallback;
+        if (prof && prof->kernel && prof->initrd && prof->cmdline_fmt) {
+            char *cmd = str_format(prof->cmdline_fmt, iso_grub_path);
+            if (!cmd) return -1;
+            fallback = str_format(
+                "        linux  (loop)%s %s\n"
+                "        initrd (loop)%s\n",
+                prof->kernel, cmd, prof->initrd);
+            free(cmd);
+        } else {
+            fallback = xstrdup(
+                "        echo \"This ISO has no embedded loopback.cfg; cannot boot it generically.\"\n"
+                "        sleep 5\n");
+        }
+        if (!fallback) return -1;
+        entry = str_format(
+            "menuentry \"%s\" --class %s {\n"
+            "    search --no-floppy --set=root --file /iso2drive/.iso2drive-store\n"
+            "    set iso=\"%s\"\n"
+            "    loopback loop \"$iso\"\n"
+            "    if [ -e (loop)/boot/grub/loopback.cfg ]; then\n"
+            "        export iso ; set root=(loop)\n"
+            "        configfile (loop)/boot/grub/loopback.cfg\n"
+            "    else\n"
+            "%s"
+            "    fi\n"
+            "}\n",
+            title, cls, iso_grub_path, fallback);
+        free(fallback);
+    }
     if (!entry) return -1;
 
     char *path = str_format("%s/%s.cfg", entries_dir, slug);

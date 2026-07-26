@@ -285,6 +285,14 @@ static int win_list_disks(void) {
     return 0;
 }
 
+static int win_create_persistence(const char *data_mount, const char *label,
+                                  bool need_conf, const char *size, bool commit) {
+    (void)data_mount; (void)label; (void)need_conf; (void)size; (void)commit;
+    log_err("persistence needs an ext4 writable image; Windows has no ext4 tooling");
+    log_err("use the Linux/AppImage side (provision/add --persist) for persistence");
+    return -1;
+}
+
 static int win_probe_env(void) {
     firmware_t fw = win_firmware_type();
     int sb = win_secure_boot_enabled();
@@ -305,10 +313,11 @@ static const frugal_backend_t g_backend = {
     .iso_close      = win_iso_close,
     .prepare_store  = win_prepare_store,
     .copy_iso       = win_copy_iso,
-    .partition_disk = win_partition_disk,
-    .install_grub   = win_install_grub,
-    .probe_env      = win_probe_env,
-    .write_usb      = win_write_usb,
-    .list_disks     = win_list_disks,
+    .partition_disk     = win_partition_disk,
+    .create_persistence = win_create_persistence,
+    .install_grub       = win_install_grub,
+    .probe_env          = win_probe_env,
+    .write_usb          = win_write_usb,
+    .list_disks         = win_list_disks,
 };
 const frugal_backend_t *backend_get(void) { return &g_backend; }
