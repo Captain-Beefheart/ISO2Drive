@@ -5,7 +5,7 @@ on:
     inputs:
       tag:
         description: "Release tag to attach the AppImage to"
-        default: v0.1.0
+        default: v0.2.0
   push:
     tags: ["v*"]
 
@@ -43,16 +43,22 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           ARCH: x86_64
-        run: ./appimagetool AppDir ISO2Drive-0.1.0-x86_64.AppImage
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          VER="${TAG#v}"
+          ./appimagetool AppDir "ISO2Drive-${VER}-x86_64.AppImage"
 
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: gh release upload "$TAG" ISO2Drive-0.1.0-x86_64.AppImage --clobber
+        run: |
+          VER="${TAG#v}"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "ISO2Drive $VER" --generate-notes
+          gh release upload "$TAG" "ISO2Drive-${VER}-x86_64.AppImage" --clobber
 
       - name: Also keep as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: ISO2Drive-AppImage
-          path: ISO2Drive-0.1.0-x86_64.AppImage
+          path: ISO2Drive-*-x86_64.AppImage
