@@ -5,6 +5,7 @@
 /iso2drive-*.exe
 /*.AppImage
 /out/
+/dist/
 __pycache__/
 *.pyc
 

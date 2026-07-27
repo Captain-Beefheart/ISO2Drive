@@ -61,10 +61,11 @@ A small Etcher-style desktop front-end (Python + tkinter) that drives the same C
 
 ![The ISO2Drive GUI](docs/screenshot.png)
 
-**Windows:** double-click **`ISO2Drive-GUI.vbs`** to open it with no console (via
-`pythonw`), or grab the standalone **`iso2drive-gui.exe`** from the
-[latest release](https://github.com/Captain-Beefheart/ISO2Drive/releases) (no Python
-needed). Otherwise, run it directly:
+**Windows:** grab the standalone GUI exe **`iso2drive-gui-…-windows-x64.exe`** from the
+[latest release](https://github.com/Captain-Beefheart/ISO2Drive/releases) — one
+double-click, **no Python needed** (it bundles Python, tkinter, *and* the engine). From
+a clone you can instead double-click **`ISO2Drive-GUI.vbs`** (opens with no console via
+`pythonw`), or run it directly:
 
 ```bash
 python gui/iso2drive_gui.py
