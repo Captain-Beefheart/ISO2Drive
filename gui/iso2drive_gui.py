@@ -44,7 +44,8 @@ def find_binary():
     pats = (["iso2drive.exe", "iso2drive-*.exe"] if os.name == "nt"
             else ["iso2drive", "iso2drive-*", "ISO2Drive-*.AppImage"])
     here = os.path.dirname(os.path.abspath(__file__))
-    for d in (here, os.path.dirname(here), os.getcwd()):
+    exedir = os.path.dirname(os.path.abspath(sys.executable))  # frozen exe / interpreter dir
+    for d in (here, os.path.dirname(here), exedir, os.getcwd()):
         for pat in pats:
             for p in sorted(glob.glob(os.path.join(d, pat)), reverse=True):
                 if os.path.isfile(p):

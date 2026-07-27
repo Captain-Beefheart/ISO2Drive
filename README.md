@@ -61,9 +61,18 @@ A small Etcher-style desktop front-end (Python + tkinter) that drives the same C
 
 ![The ISO2Drive GUI](docs/screenshot.png)
 
+**Windows:** double-click **`ISO2Drive-GUI.vbs`** to open it with no console (via
+`pythonw`), or grab the standalone **`iso2drive-gui.exe`** from the
+[latest release](https://github.com/Captain-Beefheart/ISO2Drive/releases) (no Python
+needed). Otherwise, run it directly:
+
 ```bash
 python gui/iso2drive_gui.py
 ```
+
+Either way the GUI needs the `iso2drive` engine — keep an `iso2drive*.exe` (or the
+release binary) in the same folder, the repo root, or on your `PATH`. The bundled
+exe carries its own.
 
 Pick an image, pick a drive, choose a mode — **raw USB**, **file-copy USB**, or
 **install to disk (frugal)** — then **Show plan** to preview the exact command, or
